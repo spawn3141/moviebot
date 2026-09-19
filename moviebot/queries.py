@@ -147,8 +147,9 @@ def _availability_for(conn: sqlite3.Connection, title_ids: list[int],
     for r in conn.execute(sql + " ORDER BY s.free, s.name", params):
         result.setdefault(r["title_id"], []).append({
             "service": r["key"], "name": r["name"], "free": bool(r["free"]),
-            # first_seen of the baseline is just the day we started watching the catalog
-            "since": None if r["in_baseline"] else r["first_seen"],
+            "since": r["first_seen"],
+            # picked up by the first scan: the title was there already, `since` is just that day
+            "baseline": bool(r["in_baseline"]),
         })
     return result
 
@@ -362,7 +363,13 @@ def status(conn: sqlite3.Connection) -> dict:
         """SELECT COUNT(*) AS titles, SUM(details_fetched_at IS NOT NULL) AS with_details,
                   SUM(offers_fetched_at IS NOT NULL) AS with_offers FROM titles"""
     ).fetchone()
+    first = conn.execute(
+        "SELECT MIN(started_at) FROM snapshot_runs WHERE status != 'failed'").fetchone()[0]
+    compared = conn.execute(
+        "SELECT 1 FROM snapshot_runs WHERE status IN ('ok', 'suspicious') LIMIT 1").fetchone()
     return {
+        "first_snapshot": first,
+        "has_comparison": compared is not None,
         "last_snapshot": last,
         "failed_since_last_snapshot": [dict(r) for r in failed],
         "titles": counts["titles"],

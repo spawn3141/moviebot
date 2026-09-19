@@ -1,8 +1,8 @@
 # moviebot
 
 Persönliche Film- und Serien-Empfehlungen für die deutschen Streaming-Dienste.
-Aktueller Stand: Datenbasis (Kataloge, Neuzugänge, neue Staffeln, „Meine Abos“) und REST-Server.
-Python ≥ 3.11, FastAPI.
+Aktueller Stand: Datenbasis (Kataloge, Neuzugänge, neue Staffeln, „Meine Abos“), REST-Server
+und Weboberfläche. Python ≥ 3.11 (FastAPI), Oberfläche mit Vue.
 
 Streaming-Verfügbarkeitsdaten: JustWatch (über TMDB).
 
@@ -11,6 +11,8 @@ Streaming-Verfügbarkeitsdaten: JustWatch (über TMDB).
 0. Python-Umgebung (einmalig):
    `python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"`
    Danach alle Befehle mit `.venv/bin/python -m moviebot …` statt `python3 -m moviebot …` ausführen.
+   Weboberfläche bauen (einmalig und nach Änderungen daran):
+   `cd frontend && npm install && npm run build`
 1. TMDB-Token in `config.toml` bei `read_access_token` eintragen.
 2. Anbieter-IDs prüfen: `python3 -m moviebot providers`
    (zeigt unten, ob die IDs aus der Config bekannt sind)
@@ -25,9 +27,20 @@ Streaming-Verfügbarkeitsdaten: JustWatch (über TMDB).
 | `python3 -m moviebot snapshot --service wow --skip-details` | nur ein Dienst, ohne Details (schnell) |
 | `python3 -m moviebot snapshot --backfill-offers 500` | zusätzlich Angebotsdaten für 500 ältere Titel nachladen |
 | `python3 -m moviebot abo` / `abo disney an` | Meine Abos anzeigen / ändern |
-| `python3 -m moviebot serve` | REST-Server starten → http://127.0.0.1:8080/docs |
+| `python3 -m moviebot serve` | Server starten → Oberfläche http://127.0.0.1:8080, API-Doku /docs |
 | `python3 -m moviebot status` | Katalogstand, letzte Läufe, Neuzugänge, neue Staffeln |
 | `python3 -m unittest` | Tests (offline) |
+
+## Weboberfläche
+
+- **Entdecken**: filtern nach Film/Serie, Genre, Jahr, Dienst, Suche, „neu in N Tagen“; sortieren;
+  gesehen / Sterne / nicht interessiert direkt auf der Kachel (mit Rückgängig).
+- **Neu**: Neuzugänge und neue Staffeln in deinen Diensten, nach Tagen gruppiert.
+- **Einstellungen**: Abos an/aus, kostenlose Angebote, Datenstand.
+
+Code in `frontend/` (Vue + Vite). Beim Entwickeln: `.venv/bin/python -m moviebot serve` und
+parallel `cd frontend && npm run dev` → http://localhost:5173 (lädt Änderungen sofort neu).
+`npm run build` legt die fertige Oberfläche nach `moviebot/web/`, von wo `serve` sie ausliefert.
 
 ## REST-API (Auszug, alles ausprobierbar unter `/docs`)
 
@@ -65,5 +78,8 @@ der Stimmen, damit 9,5 bei 3 Stimmen nicht vor 7,8 bei 5000 Stimmen landet.
 - **Angebote** (`offers`): bei jeder Detailabfrage werden alle Angebote des Titels gespeichert
   (Abo, kostenlos, mit Werbung, Leihen, Kaufen – bei allen Anbietern). Titel aus der Zeit davor
   bekommen sie beim nächsten ohnehin fälligen Abruf oder per `--backfill-offers`.
+- **Täglicher Abgleich**: `serve` gleicht jeden Tag um `[schedule] time` (Standard 06:00) ab;
+  verpasste Läufe werden nach dem Start nachgeholt. „Jetzt abgleichen“ in den Einstellungen bzw.
+  `POST /api/snapshot`. Eine Sperrdatei verhindert zwei gleichzeitige Abgleiche (Server und CLI).
 - **Migrationen**: Schemaänderungen werden beim Start automatisch angewendet; vorher wird eine
   Sicherung `moviebot.db.bak-v<alte Version>` angelegt.

@@ -1,15 +1,23 @@
 """REST API (FastAPI). Interactive docs at /docs."""
 
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import queries
 from .config import Config
 from .db import connect
+from .scheduler import SnapshotScheduler
+
+# Built web UI (frontend/ → `npm run build`). Without it only the API is served.
+WEB_DIR = Path(__file__).with_name("web")
 
 MediaType = Literal["movie", "tv"]
 Status = Literal["unseen", "seen", "not_interested"]
@@ -22,8 +30,9 @@ class Availability(BaseModel):
     service: str
     name: str
     free: bool
-    since: str | None = Field(description="Tag, an dem der Titel im Dienst auftauchte "
-                                          "(null = war schon beim ersten Abgleich da)")
+    since: str = Field(description="Tag, an dem wir den Titel im Dienst entdeckt haben")
+    baseline: bool = Field(description="true = beim ersten Abgleich gefunden, war also vermutlich "
+                                       "schon länger da; zählt nicht als Neuzugang")
 
 
 class UserState(BaseModel):
@@ -136,7 +145,18 @@ class FailedRun(BaseModel):
     message: str | None
 
 
+class Schedule(BaseModel):
+    time: str | None = Field(description="Uhrzeit des täglichen Abgleichs, null = aus")
+    running: bool
+    next_run: str | None
+    last_error: str | None
+
+
 class Status_(BaseModel):
+    first_snapshot: str | None
+    has_comparison: bool = Field(description="false = bisher nur der erste Abgleich, "
+                                             "Neuzugänge gibt es erst ab dem zweiten")
+    schedule: Schedule | None = Field(description="null = Server ohne Zeitplan gestartet")
     last_snapshot: str | None
     failed_since_last_snapshot: list[FailedRun]
     titles: int
@@ -147,19 +167,34 @@ class Status_(BaseModel):
 
 # --- app ---------------------------------------------------------------------------
 
-def create_app(cfg: Config) -> FastAPI:
+class SnapshotStarted(BaseModel):
+    started: bool
+
+
+def create_app(cfg: Config, scheduler: SnapshotScheduler | None = None) -> FastAPI:
     # Create/migrate the schema once at startup; requests then use plain connections.
     connect(cfg.db_path).close()
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        if scheduler:
+            scheduler.start()
+        yield
+        if scheduler:
+            scheduler.stop()
 
     app = FastAPI(
         title="moviebot",
         version="0.1.0",
         description="Filme und Serien aus deinen Streaming-Abos filtern und bewerten. "
                     + queries.ATTRIBUTION,
+        lifespan=lifespan,
     )
 
     def db() -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(cfg.db_path)
+        # One connection per request, used sequentially – but FastAPI may run this dependency
+        # and the endpoint in different worker threads, hence check_same_thread=False.
+        conn = sqlite3.connect(cfg.db_path, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
         try:
@@ -264,6 +299,40 @@ def create_app(cfg: Config) -> FastAPI:
 
     @app.get("/api/status", response_model=Status_, tags=["System"])
     def status(conn: Conn):
-        return queries.status(conn)
+        return {**queries.status(conn), "schedule": scheduler.info() if scheduler else None}
 
+    @app.post("/api/snapshot", response_model=SnapshotStarted, status_code=202, tags=["System"],
+              summary="Abgleich mit TMDB jetzt starten (läuft im Hintergrund)")
+    def start_snapshot():
+        if scheduler is None:
+            raise HTTPException(status_code=503, detail="Server läuft ohne Zeitplan (--no-schedule)")
+        if not scheduler.trigger():
+            raise HTTPException(status_code=409, detail="Es läuft bereits ein Abgleich")
+        return {"started": True}
+
+    mount_web_ui(app, WEB_DIR)
     return app
+
+
+def mount_web_ui(app: FastAPI, web_dir: Path) -> None:
+    """Serve the single-page app: static files as they are, every other non-API path gets
+    index.html so that client-side routes like /neu survive a reload."""
+    index = web_dir / "index.html"
+    if not index.exists():
+        @app.get("/", include_in_schema=False)
+        def no_ui():
+            return JSONResponse({"message": "Weboberfläche nicht gebaut (frontend: npm run build). "
+                                            "API-Doku unter /docs."})
+        return
+
+    app.mount("/assets", StaticFiles(directory=web_dir / "assets"), name="assets")
+    root = web_dir.resolve()
+
+    @app.get("/{path:path}", include_in_schema=False)
+    def web_ui(path: str):
+        if path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="Unbekannter API-Pfad")
+        file = (web_dir / path).resolve()
+        if path and file.is_file() and root in file.parents:
+            return FileResponse(file)
+        return FileResponse(index)

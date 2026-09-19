@@ -114,7 +114,11 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(d["offers"], [{"provider_id": 9, "provider": "Amazon Prime Video",
                                         "monetization": "flatrate", "service": "prime"}])
         self.assertEqual([a["service"] for a in d["available_on"]], ["prime"])
-        self.assertIsNone(d["available_on"][0]["since"])  # baseline
+        self.assertEqual(d["available_on"][0]["since"], "2026-09-19")
+        self.assertTrue(d["available_on"][0]["baseline"])
+        series = self.client.get(f"/api/titles/{self.ids['series']}").json()
+        self.assertEqual(series["available_on"][0]["since"], DAYS_AGO_2)
+        self.assertFalse(series["available_on"][0]["baseline"])
         self.assertEqual(self.client.get("/api/titles/99999").status_code, 404)
 
     def test_subscriptions_and_settings(self):
@@ -138,6 +142,28 @@ class ApiTest(unittest.TestCase):
         self.assertIn("Action", names)
         self.assertNotIn("Action & Adventure", names)
         self.assertEqual(self.client.get("/api/status").json()["titles"], 7)
+
+
+class WebUiTest(unittest.TestCase):
+    def test_spa_routes_and_files(self):
+        from fastapi import FastAPI
+
+        from moviebot.api import mount_web_ui
+
+        web = Path(tempfile.mkdtemp())
+        (web / "assets").mkdir()
+        (web / "index.html").write_text("<html>app</html>")
+        (web / "favicon.svg").write_text("<svg/>")
+        (web / "assets" / "app.js").write_text("js")
+        app = FastAPI()
+        mount_web_ui(app, web)
+        client = TestClient(app)
+        self.assertEqual(client.get("/").text, "<html>app</html>")
+        self.assertEqual(client.get("/neu").text, "<html>app</html>")  # client-side route
+        self.assertEqual(client.get("/favicon.svg").text, "<svg/>")
+        self.assertEqual(client.get("/assets/app.js").text, "js")
+        self.assertEqual(client.get("/api/nope").status_code, 404)
+        self.assertEqual(client.get("/../../etc/passwd").text, "<html>app</html>")
 
 
 if __name__ == "__main__":

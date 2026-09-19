@@ -1,6 +1,7 @@
 import os
 import tomllib
 from dataclasses import dataclass, field
+from datetime import time
 from pathlib import Path
 
 DEFAULT_CONFIG = Path("config.toml")
@@ -29,6 +30,7 @@ class Config:
     initial_subscriptions: list[str] = field(default_factory=list)
     removal_grace_runs: int = 2
     max_drop_ratio: float = 0.2
+    snapshot_time: time | None = None  # daily snapshot in `serve`; None = off
     db_path: Path = Path("data/moviebot.db")
 
     def monetization_for(self, service: Service) -> list[str]:
@@ -64,6 +66,12 @@ def load_config(path: Path | None = None) -> Config:
         if m not in MEDIA_TYPES:
             raise ValueError(f"Unbekannter Medientyp '{m}' in [scope] media_types")
 
+    raw_time = os.environ.get("MOVIEBOT_SNAPSHOT_TIME", data.get("schedule", {}).get("time", "06:00"))
+    try:
+        snapshot_time = time.fromisoformat(raw_time) if raw_time else None
+    except ValueError:
+        raise ValueError(f"Ungültige Uhrzeit '{raw_time}' in [schedule] time (Format HH:MM)") from None
+
     return Config(
         # Environment variables win, so secrets can stay out of the file.
         api_key=os.environ.get("TMDB_API_KEY") or tmdb.get("api_key") or None,
@@ -79,5 +87,6 @@ def load_config(path: Path | None = None) -> Config:
         initial_subscriptions=list(data.get("subscriptions", {}).get("initial", [])),
         removal_grace_runs=int(snapshot.get("removal_grace_runs", 2)),
         max_drop_ratio=float(snapshot.get("max_drop_ratio", 0.2)),
+        snapshot_time=snapshot_time,
         db_path=db_path,
     )

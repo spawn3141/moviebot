@@ -131,6 +131,11 @@ name = "Netzkino"
 provider_ids = [28]
 free = true
 
+[schedule]
+# Täglicher Abgleich, solange der Server läuft (`moviebot serve`). Leer = aus.
+# Verpasste Läufe (Rechner aus/im Ruhezustand) werden beim nächsten Start nachgeholt.
+time = "06:00"
+
 [snapshot]
 # Ein Titel gilt erst als "nicht mehr im Abo", wenn er so viele Tage in Folge fehlt.
 removal_grace_runs = 2

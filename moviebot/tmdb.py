@@ -75,6 +75,10 @@ class TMDBClient:
         self._last_request = 0.0
         self._ssl = _ssl_context()
 
+    @classmethod
+    def from_config(cls, cfg) -> "TMDBClient":
+        return cls(cfg.api_key, cfg.read_access_token, region=cfg.region, language=cfg.language)
+
     # --- transport -------------------------------------------------------------
 
     def get(self, path: str, params: dict | None = None) -> dict:

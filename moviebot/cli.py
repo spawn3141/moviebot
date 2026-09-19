@@ -7,13 +7,14 @@ from pathlib import Path
 from . import catalog, snapshot
 from .config import load_config
 from .db import SchemaMismatch, connect, get_setting
+from .scheduler import SnapshotScheduler, snapshot_lock
 from .tmdb import TMDBClient, TMDBError
 
 MEDIA_LABEL = {"movie": "Filme", "tv": "Serien"}
 
 
 def make_client(cfg) -> TMDBClient:
-    return TMDBClient(cfg.api_key, cfg.read_access_token, region=cfg.region, language=cfg.language)
+    return TMDBClient.from_config(cfg)
 
 
 def open_db(cfg):
@@ -61,11 +62,16 @@ def cmd_providers(cfg, args) -> int:
 def cmd_snapshot(cfg, args) -> int:
     client = make_client(cfg)
     conn = open_db(cfg)
-    results = snapshot.run(
-        conn, client, cfg, service_keys=args.service or None,
-        fetch_details=not args.skip_details, details_limit=args.details_limit,
-        backfill_offers=args.backfill_offers,
-    )
+    with snapshot_lock(cfg.db_path) as acquired:
+        if not acquired:
+            print("Es läuft bereits ein Abgleich (z. B. im Server). Bitte später erneut versuchen.",
+                  file=sys.stderr)
+            return 3
+        results = snapshot.run(
+            conn, client, cfg, service_keys=args.service or None,
+            fetch_details=not args.skip_details, details_limit=args.details_limit,
+            backfill_offers=args.backfill_offers,
+        )
     failed = False
     for (service, media_type), r in results.items():
         label = f"{cfg.service(service).name} – {MEDIA_LABEL[media_type]}"
@@ -109,8 +115,12 @@ def cmd_serve(cfg, args) -> int:
     from .api import create_app
 
     open_db(cfg).close()  # sync services from the config before serving
-    print(f"moviebot läuft: http://{args.host}:{args.port}/docs  (beenden mit Strg+C)")
-    uvicorn.run(create_app(cfg), host=args.host, port=args.port, log_level="warning")
+    scheduler = None if args.no_schedule else SnapshotScheduler(cfg)
+    print(f"moviebot läuft: http://{args.host}:{args.port}  (API-Doku: /docs, beenden mit Strg+C)")
+    if scheduler and cfg.snapshot_time:
+        print(f"Täglicher Abgleich um {cfg.snapshot_time.strftime('%H:%M')} "
+              "(verpasste Läufe werden beim Start nachgeholt)")
+    uvicorn.run(create_app(cfg, scheduler), host=args.host, port=args.port, log_level="warning")
     return 0
 
 
@@ -204,6 +214,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--host", default="127.0.0.1",
                    help="127.0.0.1 = nur dieser Rechner, 0.0.0.0 = ganzes Heimnetz")
     p.add_argument("--port", type=int, default=8080)
+    p.add_argument("--no-schedule", action="store_true", help="keinen täglichen Abgleich im Server")
 
     p = sub.add_parser("status", help="Katalogstand, letzte Läufe und Ereignisse anzeigen")
     p.add_argument("--days", type=int, default=14)

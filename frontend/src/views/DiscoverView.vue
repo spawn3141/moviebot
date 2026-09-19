@@ -1,0 +1,255 @@
+<script setup>
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { api } from '../api'
+import { currentState } from '../store'
+import TitleCard from '../components/TitleCard.vue'
+
+const PAGE_SIZE = 48
+const SORTS = [
+  ['popularity', 'Beliebt'],
+  ['rating', 'Beste Bewertung'],
+  ['newest', 'Neueste zuerst'],
+  ['added', 'Zuletzt dazugekommen'],
+  ['title', 'Titel A–Z'],
+]
+const NEW_OPTIONS = [['', 'Alle'], ['7', 'Neu: 7 Tage'], ['14', 'Neu: 14 Tage'], ['30', 'Neu: 30 Tage']]
+const DEFAULTS = {
+  media_type: '', genre: [], services: [], year_from: '', year_to: '', q: '',
+  sort: 'popularity', new_days: '', show_seen: false,
+}
+
+const route = useRoute()
+const router = useRouter()
+
+// Filters live in the URL, so reloading or bookmarking keeps them.
+const asArray = (v) => (v == null ? [] : Array.isArray(v) ? v : [v])
+const f = reactive({
+  ...DEFAULTS,
+  ...Object.fromEntries(Object.entries(route.query).filter(([k]) => k in DEFAULTS)),
+  genre: asArray(route.query.genre),
+  services: asArray(route.query.services),
+  show_seen: route.query.show_seen === 'true',
+})
+const search = ref(f.q)
+
+const items = ref([])
+const total = ref(0)
+const searchedIn = ref([])
+const page = ref(1)
+const loading = ref(false)
+const error = ref('')
+const genres = ref([])
+const services = ref([])
+const showFilters = ref(false)
+const status = ref(null)
+
+const paidServices = computed(() => services.value.filter((s) => !s.free))
+const freeServices = computed(() => services.value.filter((s) => s.free))
+const serviceNames = computed(() => Object.fromEntries(services.value.map((s) => [s.key, s.name])))
+const activeFilterCount = computed(() =>
+  ['media_type', 'year_from', 'year_to', 'new_days'].filter((k) => f[k]).length
+  + f.genre.length + f.services.length + (f.show_seen ? 1 : 0))
+
+// Cards marked as seen / not interested disappear right away (undo via the toast).
+const visible = computed(() =>
+  items.value.filter((i) => {
+    const s = currentState(i).status
+    return s === 'unseen' || (s === 'seen' && f.show_seen)
+  }))
+
+let requestId = 0
+async function load(reset = true) {
+  const id = ++requestId
+  const nextPage = reset ? 1 : page.value + 1
+  loading.value = true
+  error.value = ''
+  try {
+    const data = await api.titles({ ...f, page: nextPage, page_size: PAGE_SIZE })
+    if (id !== requestId) return // a newer request is on its way
+    items.value = reset ? data.items : [...items.value, ...data.items]
+    total.value = data.total
+    searchedIn.value = data.services
+    page.value = nextPage
+  } catch (e) {
+    if (id === requestId) error.value = e.message
+  } finally {
+    if (id === requestId) loading.value = false
+  }
+}
+
+async function loadGenres() {
+  genres.value = await api.genres({ media_type: f.media_type })
+}
+
+watch(f, () => {
+  const query = Object.fromEntries(
+    Object.entries(f).filter(([k, v]) => (Array.isArray(v) ? v.length : v !== DEFAULTS[k])))
+  router.replace({ query })
+  load()
+}, { deep: true })
+
+watch(() => f.media_type, loadGenres)
+
+let searchTimer
+watch(search, (value) => {
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => (f.q = value.trim()), 300)
+})
+
+function toggleIn(list, value) {
+  const i = list.indexOf(value)
+  if (i === -1) list.push(value)
+  else list.splice(i, 1)
+}
+
+function reset() {
+  Object.assign(f, { ...DEFAULTS, genre: [], services: [] })
+  search.value = ''
+}
+
+onMounted(async () => {
+  load()
+  loadGenres()
+  services.value = await api.services()
+  status.value = await api.status()
+})
+</script>
+
+<template>
+  <div class="discover">
+    <div class="toolbar">
+      <input v-model="search" type="search" class="search" placeholder="Titel suchen …" aria-label="Titel suchen" />
+      <div class="segmented" role="group" aria-label="Film oder Serie">
+        <button type="button" :class="{ on: f.media_type === '' }" @click="f.media_type = ''">Alles</button>
+        <button type="button" :class="{ on: f.media_type === 'movie' }" @click="f.media_type = 'movie'">Filme</button>
+        <button type="button" :class="{ on: f.media_type === 'tv' }" @click="f.media_type = 'tv'">Serien</button>
+      </div>
+      <select v-model="f.sort" aria-label="Sortierung">
+        <option v-for="[value, label] in SORTS" :key="value" :value="value">{{ label }}</option>
+      </select>
+      <select v-model="f.new_days" aria-label="Nur Neuzugänge">
+        <option v-for="[value, label] in NEW_OPTIONS" :key="value" :value="value">{{ label }}</option>
+      </select>
+      <button type="button" class="filter-toggle" :class="{ on: showFilters }" @click="showFilters = !showFilters">
+        Filter<span v-if="activeFilterCount" class="count">{{ activeFilterCount }}</span>
+      </button>
+    </div>
+
+    <div v-show="showFilters" class="filters">
+      <div class="filter-row">
+        <span class="label">Genre</span>
+        <div class="chips">
+          <button v-for="g in genres" :key="g.name" type="button" class="chip"
+                  :class="{ on: f.genre.includes(g.name) }" @click="toggleIn(f.genre, g.name)">
+            {{ g.name }}
+          </button>
+        </div>
+      </div>
+
+      <div class="filter-row">
+        <span class="label">Dienste</span>
+        <div class="chips">
+          <button type="button" class="chip" :class="{ on: !f.services.length }" @click="f.services = []">
+            Meine Dienste
+          </button>
+          <button v-for="s in paidServices" :key="s.key" type="button" class="chip"
+                  :class="{ on: f.services.includes(s.key), mine: s.subscribed }"
+                  @click="toggleIn(f.services, s.key)">{{ s.name }}</button>
+          <button v-for="s in freeServices" :key="s.key" type="button" class="chip free"
+                  :class="{ on: f.services.includes(s.key) }"
+                  @click="toggleIn(f.services, s.key)">{{ s.name }}</button>
+        </div>
+      </div>
+
+      <div class="filter-row inline">
+        <label>
+          <span class="label">Jahr von</span>
+          <input v-model.lazy="f.year_from" type="number" inputmode="numeric" placeholder="z. B. 2025" />
+        </label>
+        <label>
+          <span class="label">bis</span>
+          <input v-model.lazy="f.year_to" type="number" inputmode="numeric" placeholder="z. B. 2026" />
+        </label>
+        <label class="check">
+          <input v-model="f.show_seen" type="checkbox" /> Gesehene anzeigen
+        </label>
+        <button type="button" class="link" @click="reset">Alle Filter zurücksetzen</button>
+      </div>
+    </div>
+
+    <p class="summary">
+      <template v-if="!loading || items.length">
+        {{ total }} {{ total === 1 ? 'Titel' : 'Titel' }}
+        <template v-if="searchedIn.length">
+          in {{ searchedIn.map((k) => serviceNames[k] ?? k).join(', ') }}
+        </template>
+      </template>
+    </p>
+
+    <p v-if="error" class="error">Fehler: {{ error }}</p>
+    <div v-else-if="!loading && !searchedIn.length" class="empty">
+      Du hast noch keine Abos ausgewählt.
+      <RouterLink to="/einstellungen">Zu den Einstellungen</RouterLink>
+    </div>
+    <div v-else-if="!loading && !visible.length" class="empty">
+      <template v-if="f.new_days && status && !status.has_comparison">
+        Noch keine Neuzugänge: Bisher gab es nur den ersten Abgleich. Sie ergeben sich ab dem
+        nächsten Abgleich.
+      </template>
+      <template v-else>
+        Nichts gefunden. <button type="button" class="link" @click="reset">Filter zurücksetzen</button>
+      </template>
+    </div>
+
+    <div class="grid">
+      <TitleCard v-for="item in visible" :key="item.id" :item="item" />
+    </div>
+
+    <div class="more">
+      <button v-if="items.length < total" type="button" :disabled="loading" @click="load(false)">
+        {{ loading ? 'Lädt …' : `Mehr laden (${total - items.length} weitere)` }}
+      </button>
+      <span v-else-if="loading" class="muted">Lädt …</span>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.search { flex: 1 1 220px; }
+.segmented { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.segmented button { background: var(--panel); border: 0; color: var(--text-soft); padding: 8px 12px; cursor: pointer; }
+.segmented button + button { border-left: 1px solid var(--border); }
+.segmented button.on { background: var(--accent-2); color: #fff; }
+.filter-toggle { display: inline-flex; align-items: center; gap: 6px; }
+.filter-toggle.on { border-color: var(--accent-2); }
+.count { background: var(--accent-2); color: #fff; border-radius: 999px; font-size: .72rem; padding: 1px 7px; }
+.filters {
+  margin-top: 10px; padding: 14px; background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius); display: grid; gap: 14px;
+}
+.filter-row { display: grid; gap: 6px; }
+.filter-row.inline { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+.filter-row.inline input[type='number'] { width: 110px; }
+.label { font-size: .75rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); display: block; margin-bottom: 4px; }
+.check { display: inline-flex; align-items: center; gap: 6px; padding-bottom: 8px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  background: var(--panel-2); border: 1px solid var(--border); color: var(--text-soft);
+  padding: 5px 11px; border-radius: 999px; cursor: pointer; font-size: .85rem;
+}
+.chip.mine { border-color: var(--border-strong); color: var(--text); }
+.chip.free { border-style: dashed; }
+.chip.on { background: var(--accent-2); border-color: var(--accent-2); color: #fff; }
+.summary { color: var(--muted); font-size: .9rem; margin: 14px 0 10px; min-height: 1.2em; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(165px, 1fr)); gap: 14px; }
+.more { display: flex; justify-content: center; margin: 24px 0 8px; }
+.empty { padding: 40px 0; text-align: center; color: var(--muted); }
+.error { color: var(--danger); }
+.muted { color: var(--muted); }
+@media (max-width: 600px) {
+  .grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+  .toolbar select { flex: 1 1 40%; }
+}
+</style>
