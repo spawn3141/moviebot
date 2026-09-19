@@ -13,10 +13,11 @@ const SORTS = [
   ['added', 'Zuletzt dazugekommen'],
   ['title', 'Titel A–Z'],
 ]
+const AGE_OPTIONS = [['', 'Alle'], ['0', 'bis 0 Jahre'], ['6', 'bis 6 Jahre'], ['12', 'bis 12 Jahre'], ['16', 'bis 16 Jahre']]
 const NEW_OPTIONS = [['', 'Alle'], ['7', 'Neu: 7 Tage'], ['14', 'Neu: 14 Tage'], ['30', 'Neu: 30 Tage']]
 const DEFAULTS = {
   media_type: '', genre: [], services: [], year_from: '', year_to: '', q: '',
-  sort: 'popularity', new_days: '', show_seen: false,
+  sort: 'popularity', new_days: '', show_seen: false, max_age: '', include_unrated: false,
 }
 
 const route = useRoute()
@@ -30,6 +31,7 @@ const f = reactive({
   genre: asArray(route.query.genre),
   services: asArray(route.query.services),
   show_seen: route.query.show_seen === 'true',
+  include_unrated: route.query.include_unrated === 'true',
 })
 const search = ref(f.q)
 
@@ -48,7 +50,7 @@ const paidServices = computed(() => services.value.filter((s) => !s.free))
 const freeServices = computed(() => services.value.filter((s) => s.free))
 const serviceNames = computed(() => Object.fromEntries(services.value.map((s) => [s.key, s.name])))
 const activeFilterCount = computed(() =>
-  ['media_type', 'year_from', 'year_to', 'new_days'].filter((k) => f[k]).length
+  ['media_type', 'year_from', 'year_to', 'new_days', 'max_age'].filter((k) => f[k] !== '').length
   + f.genre.length + f.services.length + (f.show_seen ? 1 : 0))
 
 // Cards marked as seen / not interested disappear right away (undo via the toast).
@@ -65,7 +67,9 @@ async function load(reset = true) {
   loading.value = true
   error.value = ''
   try {
-    const data = await api.titles({ ...f, page: nextPage, page_size: PAGE_SIZE })
+    const params = { ...f, page: nextPage, page_size: PAGE_SIZE }
+    if (f.max_age === '') params.include_unrated = false
+    const data = await api.titles(params)
     if (id !== requestId) return // a newer request is on its way
     items.value = reset ? data.items : [...items.value, ...data.items]
     total.value = data.total
@@ -164,6 +168,18 @@ onMounted(async () => {
 
       <div class="filter-row inline">
         <label>
+          <span class="label">Altersfreigabe</span>
+          <select v-model="f.max_age" aria-label="Altersfreigabe">
+            <option v-for="[value, label] in AGE_OPTIONS" :key="value" :value="value">{{ label }}</option>
+          </select>
+        </label>
+        <label v-if="f.max_age !== ''" class="check">
+          <input v-model="f.include_unrated" type="checkbox" /> Titel ohne Angabe anzeigen
+        </label>
+      </div>
+
+      <div class="filter-row inline">
+        <label>
           <span class="label">Jahr von</span>
           <input v-model.lazy="f.year_from" type="number" inputmode="numeric" placeholder="z. B. 2025" />
         </label>
@@ -186,6 +202,13 @@ onMounted(async () => {
         </template>
       </template>
     </p>
+
+    <p v-if="f.max_age !== '' && status && status.titles_ratings_checked < status.titles" class="hint">
+      Altersfreigaben sind bisher erst für {{ status.titles_ratings_checked }} von {{ status.titles }}
+      Titeln abgefragt (bekannt bei {{ status.titles_with_age_rating }}). Der Rest kommt mit den
+      nächsten Abgleichen oder einem Nachlauf. * = aus US-Freigabe geschätzt.
+    </p>
+    <p v-else-if="f.max_age !== ''" class="hint">* = aus US-Freigabe geschätzt</p>
 
     <p v-if="error" class="error">Fehler: {{ error }}</p>
     <div v-else-if="!loading && !searchedIn.length" class="empty">
@@ -247,6 +270,7 @@ onMounted(async () => {
 .more { display: flex; justify-content: center; margin: 24px 0 8px; }
 .empty { padding: 40px 0; text-align: center; color: var(--muted); }
 .error { color: var(--danger); }
+.hint { color: var(--muted); font-size: .85rem; margin: -4px 0 12px; }
 .muted { color: var(--muted); }
 @media (max-width: 600px) {
   .grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }

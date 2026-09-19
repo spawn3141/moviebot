@@ -39,6 +39,8 @@ class TitleFilter:
     year_to: int | None = None
     q: str | None = None
     min_rating: float | None = None
+    max_age: int | None = None             # age rating <= this
+    include_unrated: bool = False          # with max_age: also titles without any age rating
     new_days: int | None = None            # only titles new in the selected services / new season
     show_seen: bool = False
     show_not_interested: bool = False
@@ -124,6 +126,9 @@ def _summary(row: sqlite3.Row, available: list[dict]) -> dict:
         "vote_average": row["vote_average"],
         "vote_count": row["vote_count"],
         "poster_url": f"{POSTER_BASE}{row['poster_path']}" if row["poster_path"] else None,
+        "age_rating": row["age_rating"],
+        "age_rating_source": row["age_rating_source"],
+        "age_rating_raw": row["age_rating_raw"],
         "available_on": available,
         "user": {"status": row["status"] or "unseen", "rating": row["rating"]},
     }
@@ -184,6 +189,9 @@ def search_titles(conn: sqlite3.Connection, f: TitleFilter, today: date | None =
     if f.min_rating is not None:
         where.append("t.vote_average >= ?")
         params.append(f.min_rating)
+    if f.max_age is not None:
+        where.append("(t.age_rating <= ?" + (" OR t.age_rating IS NULL)" if f.include_unrated else ")"))
+        params.append(f.max_age)
     hidden = [s for s, show in (("seen", f.show_seen), ("not_interested", f.show_not_interested))
               if not show]
     if hidden:
@@ -361,7 +369,9 @@ def status(conn: sqlite3.Connection) -> dict:
     ).fetchall()
     counts = conn.execute(
         """SELECT COUNT(*) AS titles, SUM(details_fetched_at IS NOT NULL) AS with_details,
-                  SUM(offers_fetched_at IS NOT NULL) AS with_offers FROM titles"""
+                  SUM(offers_fetched_at IS NOT NULL) AS with_offers,
+                  SUM(ratings_fetched_at IS NOT NULL) AS ratings_checked,
+                  SUM(age_rating IS NOT NULL) AS with_age FROM titles"""
     ).fetchone()
     first = conn.execute(
         "SELECT MIN(started_at) FROM snapshot_runs WHERE status != 'failed'").fetchone()[0]
@@ -375,5 +385,7 @@ def status(conn: sqlite3.Connection) -> dict:
         "titles": counts["titles"],
         "titles_with_details": counts["with_details"] or 0,
         "titles_with_offers": counts["with_offers"] or 0,
+        "titles_ratings_checked": counts["ratings_checked"] or 0,
+        "titles_with_age_rating": counts["with_age"] or 0,
         "attribution": ATTRIBUTION,
     }

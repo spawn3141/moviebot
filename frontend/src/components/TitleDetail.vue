@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { api } from '../api'
-import { MONETIZATION, TV_STATUS, durationLabel, formatDate } from '../format'
+import { MONETIZATION, TV_STATUS, ageLabel, durationLabel, formatDate } from '../format'
 import { currentState, updateUserState } from '../store'
 import StarRating from './StarRating.vue'
 
@@ -79,6 +79,7 @@ onBeforeUnmount(() => {
               <span v-if="title.year">{{ title.year }}</span>
               <span v-if="durationLabel(title)">{{ durationLabel(title) }}</span>
               <span v-if="title.tv_status">{{ TV_STATUS[title.tv_status] ?? title.tv_status }}</span>
+              <span v-if="ageLabel(title)" class="age">{{ ageLabel(title).long }}</span>
             </p>
             <p class="genres">{{ title.genres.join(' · ') }}</p>
             <p v-if="title.vote_average" class="tmdb-score">
@@ -185,6 +186,7 @@ onBeforeUnmount(() => {
 h2 { margin: 0 40px 2px 0; font-size: 1.5rem; line-height: 1.2; }
 .original { margin: 0 0 6px; color: var(--muted); font-style: italic; }
 .meta { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 6px 0; color: var(--text-soft); font-size: .9rem; }
+.meta .age { border: 1px solid var(--border-strong); border-radius: 6px; padding: 0 6px; }
 .genres { margin: 0 0 6px; color: var(--muted); font-size: .9rem; }
 .tmdb-score { margin: 0 0 14px; color: var(--accent); font-weight: 600; }
 .tmdb-score small { color: var(--muted); font-weight: 400; }

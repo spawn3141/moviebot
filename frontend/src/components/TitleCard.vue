@@ -1,5 +1,6 @@
 <script setup>
 import { computed } from 'vue'
+import { ageLabel } from '../format'
 import { currentState, ui, updateUserState } from '../store'
 import StarRating from './StarRating.vue'
 
@@ -10,6 +11,7 @@ const props = defineProps({
 
 const state = computed(() => currentState(props.item))
 const services = computed(() => props.item.available_on.map((a) => a.name).join(' · '))
+const age = computed(() => ageLabel(props.item))
 
 function toggle(status) {
   updateUserState(props.item, { status: state.value.status === status ? 'unseen' : status })
@@ -25,6 +27,7 @@ function toggle(status) {
       <span class="kind">{{ item.media_type === 'tv' ? 'Serie' : 'Film' }}</span>
       <span v-if="item.vote_average" class="score">★ {{ item.vote_average.toFixed(1) }}</span>
       <span v-if="badge" class="badge">{{ badge }}</span>
+      <span v-if="age" class="age" :title="age.long">{{ age.short }}</span>
     </div>
     <div class="card-body">
       <h3 :title="item.title">{{ item.title }}</h3>
@@ -57,13 +60,14 @@ function toggle(status) {
   position: absolute; inset: 0; display: grid; place-items: center; padding: 12px;
   text-align: center; color: var(--muted); font-weight: 600;
 }
-.kind, .score, .badge {
+.kind, .score, .badge, .age {
   position: absolute; font-size: .72rem; font-weight: 600; padding: 2px 7px; border-radius: 999px;
   background: rgba(10, 12, 16, .82); color: var(--text); backdrop-filter: blur(4px);
 }
 .kind { top: 8px; left: 8px; }
 .score { top: 8px; right: 8px; color: var(--accent); }
 .badge { bottom: 8px; left: 8px; background: var(--accent-2); color: #fff; }
+.age { bottom: 8px; right: 8px; }
 .card-body { padding: 10px 10px 8px; display: flex; flex-direction: column; gap: 3px; flex: 1; }
 h3 { margin: 0; font-size: .95rem; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .meta, .services { margin: 0; font-size: .78rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

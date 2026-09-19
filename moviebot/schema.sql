@@ -58,6 +58,10 @@ CREATE TABLE IF NOT EXISTS titles (
     watch_link         TEXT,                   -- TMDB/JustWatch page listing where to watch
     details_fetched_at TEXT,                   -- NULL = only discover data so far
     offers_fetched_at  TEXT,                   -- NULL = `offers` not stored yet for this title
+    age_rating         INTEGER,                -- minimum age 0/6/12/16/18, NULL = unknown
+    age_rating_source  TEXT,                   -- 'fsk' (German) or 'us' (converted US rating)
+    age_rating_raw     TEXT,                   -- as published, e.g. '12' or 'PG-13'
+    ratings_fetched_at TEXT,                   -- NULL = age ratings not requested yet
     created_at         TEXT NOT NULL,
     updated_at         TEXT NOT NULL,
     UNIQUE (media_type, tmdb_id)

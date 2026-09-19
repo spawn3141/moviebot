@@ -46,3 +46,15 @@ export function durationLabel(item) {
   const m = item.runtime % 60
   return h ? `${h} Std. ${m} Min.` : `${m} Min.`
 }
+
+// "FSK 12" for German ratings, "ab 12*" for ones converted from the US rating
+export function ageLabel(item) {
+  if (item.age_rating == null) return null
+  if (item.age_rating_source === 'fsk') {
+    return { short: `FSK ${item.age_rating}`, long: `FSK ${item.age_rating}` }
+  }
+  return {
+    short: `ab ${item.age_rating}*`,
+    long: `ab ${item.age_rating} (geschätzt aus US-Freigabe ${item.age_rating_raw})`,
+  }
+}

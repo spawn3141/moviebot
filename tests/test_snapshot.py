@@ -220,6 +220,8 @@ def fake_details(media_type: str, tmdb_id: int, flatrate: list[int], seasons=Non
                     "cast": [{"name": "B", "order": 1}, {"name": "A", "order": 0}]},
         "watch/providers": {"results": {"DE": {
             "flatrate": [{"provider_id": p} for p in flatrate], "rent": [{"provider_id": 9}]}}},
+        "release_dates": {"results": [{"iso_3166_1": "US", "release_dates": [{"certification": "PG-13"}]}]},
+        "content_ratings": {"results": [{"iso_3166_1": "DE", "rating": "6"}]},
     }
     if media_type == "movie":
         d.update(title=f"T{tmdb_id}", release_date="2025-05-01",
@@ -263,8 +265,9 @@ class DetailsTest(unittest.TestCase):
         self.assertEqual(offers, {(a, 2100, "flatrate"), (a, 9, "rent"),
                                   (b, 8, "flatrate"), (b, 9, "rent")})
         self.assertIsNotNone(t["offers_fetched_at"])
+        self.assertEqual((t["age_rating"], t["age_rating_source"], t["age_rating_raw"]), (12, "us", "PG-13"))
 
-    def test_backfill_offers_only_when_asked(self):
+    def test_backfill_only_when_asked(self):
         title_id = self.add("movie", 1)
         with self.conn:  # details from before offers were stored
             self.conn.execute("UPDATE titles SET details_fetched_at = 'x' WHERE id = ?", (title_id,))
@@ -279,10 +282,10 @@ class DetailsTest(unittest.TestCase):
 
         self.assertEqual(snapshot.update_details(self.conn, FakeClient(), self.cfg, D0), 0)
         self.assertEqual(snapshot.update_details(self.conn, FakeClient(), self.cfg, D0,
-                                                 backfill_offers=10), 1)
+                                                 backfill=10), 1)
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM offers").fetchone()[0], 2)
         self.assertEqual(snapshot.update_details(self.conn, FakeClient(), self.cfg, D0,
-                                                 backfill_offers=10), 0)
+                                                 backfill=10), 0)
 
     def test_running_series_refreshed_daily_and_new_season_found(self):
         title_id = self.add("tv", 7, service="wow")
@@ -300,6 +303,7 @@ class DetailsTest(unittest.TestCase):
         t = self.conn.execute("SELECT * FROM titles WHERE id = ?", (title_id,)).fetchone()
         self.assertEqual((t["directors"], t["keywords"], t["runtime"], t["year"]),
                          ('["C"]', '["spy"]', 45, 2019))
+        self.assertEqual((t["age_rating"], t["age_rating_source"]), (6, "fsk"))
         # same day: nothing to do
         snapshot.update_details(self.conn, client, self.cfg, date.today())
         self.assertEqual(client.calls, 1)

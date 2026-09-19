@@ -54,6 +54,10 @@ class ApiTest(unittest.TestCase):
             title("unverified", "movie", "Nur Leihen E", ["Action"], "prime", verified=0)
             title("removed", "movie", "Weg F", ["Action"], "prime", removed="2026-09-10")
             title("lucky", "movie", "Zufall G", ["Drama"], "prime", votes=(9.5, 3), popularity=10)
+            conn.execute("UPDATE titles SET age_rating = 6, age_rating_source = 'fsk', age_rating_raw = '6' "
+                         "WHERE id = ?", (self.ids["series"],))
+            conn.execute("UPDATE titles SET age_rating = 16, age_rating_source = 'us', age_rating_raw = 'R' "
+                         "WHERE id = ?", (self.ids["action"],))
             conn.execute("INSERT INTO offers (title_id, provider_id, monetization, updated_at) "
                          "VALUES (?, 9, 'flatrate', 'x')", (self.ids["action"],))
             conn.execute("INSERT INTO events (title_id, service, event, event_date) VALUES (?, 'wow', 'added', ?)",
@@ -82,6 +86,14 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(self.titles(services="netflix"), ["Netflix C"])
         self.assertEqual(self.titles(include_free=True), ["Action A", "Serie B", "Frei D", "Zufall G"])
         self.assertEqual(self.titles(new_days=7), ["Serie B"])
+
+    def test_age_filter(self):
+        self.assertEqual(self.titles(max_age=12), ["Serie B"])
+        self.assertEqual(self.titles(max_age=16), ["Action A", "Serie B"])
+        self.assertEqual(self.titles(max_age=6, include_unrated=True), ["Serie B", "Zufall G"])
+        item = self.client.get("/api/titles", params={"max_age": 16}).json()["items"][0]
+        self.assertEqual((item["age_rating"], item["age_rating_source"], item["age_rating_raw"]),
+                         (16, "us", "R"))
 
     def test_rating_sort_is_weighted_by_vote_count(self):
         self.assertEqual(self.titles(sort="rating"), ["Action A", "Serie B", "Zufall G"])

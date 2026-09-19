@@ -4,6 +4,7 @@ import json
 import sqlite3
 from datetime import date
 
+from .age_ratings import age_rating
 from .config import Config
 from .db import get_setting, now_iso, set_setting
 
@@ -259,3 +260,13 @@ def store_offers(conn: sqlite3.Connection, title_id: int, details: dict, region:
     )
     conn.execute("UPDATE titles SET watch_link = ?, offers_fetched_at = ? WHERE id = ?",
                  (region_data.get("link"), now, title_id))
+
+
+def store_age_rating(conn: sqlite3.Connection, title_id: int, media_type: str, details: dict) -> None:
+    rating = age_rating(details, media_type)
+    age, source, raw = rating if rating else (None, None, None)
+    conn.execute(
+        """UPDATE titles SET age_rating = ?, age_rating_source = ?, age_rating_raw = ?,
+                  ratings_fetched_at = ? WHERE id = ?""",
+        (age, source, raw, now_iso(), title_id),
+    )

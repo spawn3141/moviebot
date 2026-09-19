@@ -53,6 +53,10 @@ class TitleSummary(BaseModel):
     vote_average: float | None
     vote_count: int | None
     poster_url: str | None
+    age_rating: int | None = Field(description="Mindestalter 0/6/12/16/18, null = unbekannt")
+    age_rating_source: Literal["fsk", "us"] | None = Field(
+        description="fsk = deutsche Freigabe, us = aus US-Freigabe umgerechnet")
+    age_rating_raw: str | None = Field(description="Originalangabe, z. B. '12' oder 'PG-13'")
     available_on: list[Availability]
     user: UserState
 
@@ -162,6 +166,8 @@ class Status_(BaseModel):
     titles: int
     titles_with_details: int
     titles_with_offers: int
+    titles_ratings_checked: int = Field(description="Titel, für die Freigaben abgefragt wurden")
+    titles_with_age_rating: int
     attribution: str
 
 
@@ -221,6 +227,10 @@ def create_app(cfg: Config, scheduler: SnapshotScheduler | None = None) -> FastA
         year_to: int | None = None,
         q: Annotated[str | None, Query(description="Suche im Titel")] = None,
         min_rating: Annotated[float | None, Query(ge=0, le=10)] = None,
+        max_age: Annotated[int | None, Query(
+            ge=0, le=18, description="Nur Titel mit Altersfreigabe bis zu diesem Alter")] = None,
+        include_unrated: Annotated[bool, Query(
+            description="Mit max_age: auch Titel ohne bekannte Freigabe zeigen")] = False,
         new_days: Annotated[int | None, Query(
             ge=1, description="Nur neu im Dienst oder neue Staffel in den letzten N Tagen")] = None,
         show_seen: bool = False,
@@ -232,7 +242,8 @@ def create_app(cfg: Config, scheduler: SnapshotScheduler | None = None) -> FastA
         f = queries.TitleFilter(
             services=services, include_free=include_free, media_type=media_type,
             genres=genre or [], year_from=year_from, year_to=year_to, q=q,
-            min_rating=min_rating, new_days=new_days, show_seen=show_seen,
+            min_rating=min_rating, max_age=max_age, include_unrated=include_unrated,
+            new_days=new_days, show_seen=show_seen,
             show_not_interested=show_not_interested, sort=sort, page=page, page_size=page_size,
         )
         try:

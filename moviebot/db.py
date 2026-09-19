@@ -6,7 +6,7 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 SCHEMA_FILE = Path(__file__).with_name("schema.sql")
 
 # Upgrade steps for existing databases: target version -> statements.
@@ -19,6 +19,12 @@ MIGRATIONS: dict[int, list[str]] = {
     ],
     4: [
         "ALTER TABLE services ADD COLUMN free INTEGER NOT NULL DEFAULT 0",
+    ],
+    5: [
+        "ALTER TABLE titles ADD COLUMN age_rating INTEGER",
+        "ALTER TABLE titles ADD COLUMN age_rating_source TEXT",
+        "ALTER TABLE titles ADD COLUMN age_rating_raw TEXT",
+        "ALTER TABLE titles ADD COLUMN ratings_fetched_at TEXT",
     ],
 }
 

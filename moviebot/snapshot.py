@@ -204,7 +204,7 @@ def snapshot_service(conn: sqlite3.Connection, client: TMDBClient, cfg: Config, 
 
 
 def update_details(conn: sqlite3.Connection, client: TMDBClient, cfg: Config, today: date,
-                   limit: int | None = None, backfill_offers: int = 0) -> int:
+                   limit: int | None = None, backfill: int = 0) -> int:
     """Fetch details where needed. One request per title does three jobs:
 
     1. metadata (genres, keywords, directors/creators, cast) for titles that lack it,
@@ -212,9 +212,9 @@ def update_details(conn: sqlite3.Connection, client: TMDBClient, cfg: Config, to
        filter might match a title that is only rent/buy at this service (`verified = 0`),
     3. for series that are still running: refresh seasons to detect new ones (once per day).
 
-    Every fetch also stores all offers of the title (`offers`). Titles from before offers were
-    stored only get them when they are fetched anyway; `backfill_offers` adds up to that many
-    of them (most popular first) to this run.
+    Every fetch also stores all offers of the title (`offers`) and its age rating. Titles from
+    before these were stored only get them when they are fetched anyway; `backfill` adds up to
+    that many of them (most popular first) to this run.
     """
     todo = conn.execute(
         f"""
@@ -231,14 +231,15 @@ def update_details(conn: sqlite3.Connection, client: TMDBClient, cfg: Config, to
         """,
         (*FINISHED_TV_STATUSES, today.isoformat()),
     ).fetchall()
-    if backfill_offers:
+    if backfill:
         planned = {r["id"] for r in todo}
         todo += [
             r for r in conn.execute(
-                """SELECT id, media_type, tmdb_id FROM titles WHERE offers_fetched_at IS NULL
+                """SELECT id, media_type, tmdb_id FROM titles
+                   WHERE offers_fetched_at IS NULL OR ratings_fetched_at IS NULL
                    ORDER BY popularity DESC"""
             ) if r["id"] not in planned
-        ][:backfill_offers]
+        ][:backfill]
     if limit is not None:
         todo = todo[:limit]
     log.info("Details für %d Titel", len(todo))
@@ -261,6 +262,7 @@ def update_details(conn: sqlite3.Connection, client: TMDBClient, cfg: Config, to
         with conn:
             title_id, had_details = catalog.upsert_details(conn, row["media_type"], details)
             catalog.store_offers(conn, title_id, details, cfg.region)
+            catalog.store_age_rating(conn, title_id, row["media_type"], details)
             for a in conn.execute(
                 "SELECT service FROM availability WHERE title_id = ? AND removed_at IS NULL",
                 (title_id,),
@@ -288,7 +290,7 @@ def check_provider_ids(conn: sqlite3.Connection, cfg: Config) -> list[str]:
 
 def run(conn: sqlite3.Connection, client: TMDBClient, cfg: Config, *,
         service_keys: list[str] | None = None, fetch_details: bool = True,
-        details_limit: int | None = None, backfill_offers: int = 0, today: date | None = None
+        details_limit: int | None = None, backfill: int = 0, today: date | None = None
         ) -> dict[tuple[str, str], DiffResult | None]:
     today = today or date.today()
     if not cfg.services:
@@ -310,6 +312,5 @@ def run(conn: sqlite3.Connection, client: TMDBClient, cfg: Config, *,
                 conn, client, cfg, service, media_type, genre_names, today
             )
     if fetch_details:
-        update_details(conn, client, cfg, today, limit=details_limit,
-                       backfill_offers=backfill_offers)
+        update_details(conn, client, cfg, today, limit=details_limit, backfill=backfill)
     return results

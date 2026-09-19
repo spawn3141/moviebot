@@ -70,7 +70,7 @@ def cmd_snapshot(cfg, args) -> int:
         results = snapshot.run(
             conn, client, cfg, service_keys=args.service or None,
             fetch_details=not args.skip_details, details_limit=args.details_limit,
-            backfill_offers=args.backfill_offers,
+            backfill=args.backfill,
         )
     failed = False
     for (service, media_type), r in results.items():
@@ -203,8 +203,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--service", action="append", help="nur dieser Dienst (mehrfach möglich)")
     p.add_argument("--skip-details", action="store_true", help="keine Detailabfragen")
     p.add_argument("--details-limit", type=int, help="max. Anzahl Detailabfragen in diesem Lauf")
-    p.add_argument("--backfill-offers", type=int, default=0, metavar="N",
-                   help="zusätzlich Angebotsdaten für bis zu N ältere Titel nachladen")
+    p.add_argument("--backfill", "--backfill-offers", dest="backfill", type=int, default=0,
+                   metavar="N", help="zusätzlich Angebote und Altersfreigaben für bis zu N "
+                                     "ältere Titel nachladen")
 
     p = sub.add_parser("abo", help="Meine Abos anzeigen oder ändern, z. B. 'abo disney an'")
     p.add_argument("service", nargs="?")

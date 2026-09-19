@@ -135,9 +135,11 @@ class TMDBClient:
         return {g["id"]: g["name"] for g in data.get("genres", [])}
 
     def details(self, media_type: str, tmdb_id: int) -> dict:
+        ratings = "release_dates" if media_type == "movie" else "content_ratings"
         return self.get(
             f"/{media_type}/{tmdb_id}",
-            {"language": self.language, "append_to_response": "keywords,credits,watch/providers"},
+            {"language": self.language,
+             "append_to_response": f"keywords,credits,watch/providers,{ratings}"},
         )
 
     def discover_catalog(self, media_type: str, provider_ids: list[int],

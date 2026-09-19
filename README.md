@@ -25,7 +25,7 @@ Streaming-Verfügbarkeitsdaten: JustWatch (über TMDB).
 | `python3 -m moviebot providers [--search X]` | Anbieter-IDs nachschlagen, Config prüfen |
 | `python3 -m moviebot snapshot` | Kataloge holen, mit gestern vergleichen, Details laden |
 | `python3 -m moviebot snapshot --service wow --skip-details` | nur ein Dienst, ohne Details (schnell) |
-| `python3 -m moviebot snapshot --backfill-offers 500` | zusätzlich Angebotsdaten für 500 ältere Titel nachladen |
+| `python3 -m moviebot snapshot --backfill 500` | zusätzlich Angebote + Altersfreigaben für 500 ältere Titel nachladen |
 | `python3 -m moviebot abo` / `abo disney an` | Meine Abos anzeigen / ändern |
 | `python3 -m moviebot serve` | Server starten → Oberfläche http://127.0.0.1:8080, API-Doku /docs |
 | `python3 -m moviebot status` | Katalogstand, letzte Läufe, Neuzugänge, neue Staffeln |
@@ -77,9 +77,12 @@ der Stimmen, damit 9,5 bei 3 Stimmen nicht vor 7,8 bei 5000 Stimmen landet.
   um Titel auszusortieren, die beim Dienst nur zum Leihen/Kaufen sind.
 - **Angebote** (`offers`): bei jeder Detailabfrage werden alle Angebote des Titels gespeichert
   (Abo, kostenlos, mit Werbung, Leihen, Kaufen – bei allen Anbietern). Titel aus der Zeit davor
-  bekommen sie beim nächsten ohnehin fälligen Abruf oder per `--backfill-offers`.
+  bekommen sie beim nächsten ohnehin fälligen Abruf oder per `--backfill`.
 - **Täglicher Abgleich**: `serve` gleicht jeden Tag um `[schedule] time` (Standard 06:00) ab;
   verpasste Läufe werden nach dem Start nachgeholt. „Jetzt abgleichen“ in den Einstellungen bzw.
   `POST /api/snapshot`. Eine Sperrdatei verhindert zwei gleichzeitige Abgleiche (Server und CLI).
+- **Altersfreigabe**: deutsche FSK, sonst die US-Freigabe umgerechnet (G→0, PG→6, PG-13→12, R→16,
+  NC-17→18; Serien TV-Y/TV-G→0, TV-Y7/TV-PG→6, TV-14→12, TV-MA→16), in der Oberfläche mit * markiert.
+  Kommt mit derselben Detailabfrage; ältere Titel per `--backfill`. Filter `max_age` (+ `include_unrated`).
 - **Migrationen**: Schemaänderungen werden beim Start automatisch angewendet; vorher wird eine
   Sicherung `moviebot.db.bak-v<alte Version>` angelegt.
