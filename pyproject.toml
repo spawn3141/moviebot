@@ -1,0 +1,23 @@
+[project]
+name = "moviebot"
+version = "0.1.0"
+description = "Persönliche Film- und Serien-Empfehlungen für deutsche Streaming-Dienste"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "certifi",
+]
+
+[project.optional-dependencies]
+dev = ["httpx2"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["moviebot"]
+
+[tool.setuptools.package-data]
+moviebot = ["schema.sql"]

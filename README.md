@@ -1,0 +1,69 @@
+# moviebot
+
+Persönliche Film- und Serien-Empfehlungen für die deutschen Streaming-Dienste.
+Aktueller Stand: Datenbasis (Kataloge, Neuzugänge, neue Staffeln, „Meine Abos“) und REST-Server.
+Python ≥ 3.11, FastAPI.
+
+Streaming-Verfügbarkeitsdaten: JustWatch (über TMDB).
+
+## Einrichtung
+
+0. Python-Umgebung (einmalig):
+   `python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"`
+   Danach alle Befehle mit `.venv/bin/python -m moviebot …` statt `python3 -m moviebot …` ausführen.
+1. TMDB-Token in `config.toml` bei `read_access_token` eintragen.
+2. Anbieter-IDs prüfen: `python3 -m moviebot providers`
+   (zeigt unten, ob die IDs aus der Config bekannt sind)
+3. Erster Lauf: `python3 -m moviebot snapshot`
+
+## Befehle
+
+| Befehl | Zweck |
+|---|---|
+| `python3 -m moviebot providers [--search X]` | Anbieter-IDs nachschlagen, Config prüfen |
+| `python3 -m moviebot snapshot` | Kataloge holen, mit gestern vergleichen, Details laden |
+| `python3 -m moviebot snapshot --service wow --skip-details` | nur ein Dienst, ohne Details (schnell) |
+| `python3 -m moviebot snapshot --backfill-offers 500` | zusätzlich Angebotsdaten für 500 ältere Titel nachladen |
+| `python3 -m moviebot abo` / `abo disney an` | Meine Abos anzeigen / ändern |
+| `python3 -m moviebot serve` | REST-Server starten → http://127.0.0.1:8080/docs |
+| `python3 -m moviebot status` | Katalogstand, letzte Läufe, Neuzugänge, neue Staffeln |
+| `python3 -m unittest` | Tests (offline) |
+
+## REST-API (Auszug, alles ausprobierbar unter `/docs`)
+
+| Endpunkt | Zweck |
+|---|---|
+| `GET /api/titles` | filtern (Dienst, Film/Serie, Genre, Jahr, Suche, neu in N Tagen) und sortieren |
+| `GET /api/titles/{id}` | alle Infos inkl. Staffeln und Angeboten |
+| `PUT /api/titles/{id}/state` | gesehen / Bewertung 1–5 / nicht interessiert |
+| `GET /api/new` | Neuzugänge und neue Staffeln in meinen Diensten |
+| `GET/PUT /api/services` | Dienste, Abos an/aus |
+| `GET/PUT /api/settings` | kostenlose Angebote einbeziehen |
+| `GET /api/genres`, `GET /api/status` | Genre-Liste, Datenstand |
+
+Genres von Filmen und Serien sind vereinheitlicht („Action & Adventure“ zählt als Action und Abenteuer).
+Gezeigt werden nur Titel, deren Verfügbarkeit bestätigt ist. Sortierung „rating“ gewichtet nach Anzahl
+der Stimmen, damit 9,5 bei 3 Stimmen nicht vor 7,8 bei 5000 Stimmen landet.
+
+## Wie es funktioniert
+
+- **Dienste** (`[[services]]` in der Config) werden täglich verfolgt, egal ob abonniert.
+  Ein Dienst kann mehrere TMDB-IDs haben (z. B. Prime Video + „Prime Video with Ads“).
+- **Meine Abos** ist davon getrennt und bestimmt, was gezeigt und empfohlen wird.
+- **Kostenlose Dienste** (`free = true`: Mediatheken, Joyn, Pluto TV …) braucht man nicht zu abonnieren;
+  sie werden einbezogen, wenn die Einstellung `include_free` an ist.
+- **Zeitraum** `min_year`: Filme ab diesem Erscheinungsjahr, Serien mit Folgen seit diesem Jahr.
+- **Neuzugänge**: täglicher Katalog-Vergleich. Der erste Lauf ist nur Ausgangsstand (keine Meldungen).
+  Wird `min_year` geändert, gelten dazukommende Titel nicht als neu, und herausfallende nicht als weg.
+- **Nicht mehr im Abo**: erst nach 2 Tagen in Folge fehlend; der Titel selbst bleibt in der Datenbank.
+  Bricht ein Katalog um > 20 % ein, wird nichts als weg gezählt (vermutlich API-Lücke).
+- **Neue Staffeln**: laufende Serien werden täglich geprüft; eine Staffel gilt als neu, sobald ihr
+  Ausstrahlungsdatum erreicht ist. Hinweis: TMDB weiß nur, dass die *Serie* im Abo ist, nicht,
+  ob die neue Staffel dort schon verfügbar ist.
+- **Gegenprüfung**: pro Titel wird die Verfügbarkeit einzeln nachgeschlagen (`verified`),
+  um Titel auszusortieren, die beim Dienst nur zum Leihen/Kaufen sind.
+- **Angebote** (`offers`): bei jeder Detailabfrage werden alle Angebote des Titels gespeichert
+  (Abo, kostenlos, mit Werbung, Leihen, Kaufen – bei allen Anbietern). Titel aus der Zeit davor
+  bekommen sie beim nächsten ohnehin fälligen Abruf oder per `--backfill-offers`.
+- **Migrationen**: Schemaänderungen werden beim Start automatisch angewendet; vorher wird eine
+  Sicherung `moviebot.db.bak-v<alte Version>` angelegt.

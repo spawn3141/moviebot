@@ -1,0 +1,142 @@
+# Kopieren nach config.toml und ausfüllen. config.toml ist in .gitignore.
+
+[tmdb]
+# Eins von beiden reicht. Alternativ per Umgebungsvariable
+# TMDB_READ_ACCESS_TOKEN bzw. TMDB_API_KEY (hat Vorrang).
+read_access_token = ""
+api_key = ""
+region = "DE"
+language = "de-DE"
+
+[scope]
+# Nur Titel ab diesem Jahr. Filme: Erscheinungsjahr. Serien: seit diesem Jahr liefen Folgen.
+# Kann jederzeit geändert werden – dazukommende ältere Titel gelten nicht als "neu im Abo".
+min_year = 2025
+media_types = ["movie", "tv"]
+# Nur Abo-Inhalte (kein Leihen/Kaufen).
+monetization = ["flatrate"]
+
+# Nur beim allerersten Start übernommen. Danach: `python3 -m moviebot abo disney an`
+# (später über die Weboberfläche).
+[subscriptions]
+initial = ["prime", "wow"]
+
+# Dienste, deren Kataloge täglich verfolgt werden.
+# provider_ids sind TMDB/JustWatch-IDs – mit `python3 -m moviebot providers` prüfen!
+# Stand 2026-09-19 gegen TMDB (DE) geprüft. Mehrere IDs = eine Variante mit Werbung o. Ä.
+# Keine "... Amazon Channel"-Provider eintragen – die kosten extra.
+[[services]]
+key = "netflix"
+name = "Netflix"
+provider_ids = [8, 1796]
+
+[[services]]
+key = "prime"
+name = "Prime Video"
+provider_ids = [9, 2100]
+
+[[services]]
+key = "disney"
+name = "Disney+"
+provider_ids = [337]
+
+[[services]]
+key = "wow"
+name = "WOW"
+provider_ids = [30]
+
+[[services]]
+key = "hbomax"
+name = "HBO Max"
+provider_ids = [1899]
+
+[[services]]
+key = "appletv"
+name = "Apple TV+"
+provider_ids = [350]
+
+[[services]]
+key = "paramount"
+name = "Paramount+"
+provider_ids = [531]
+
+[[services]]
+key = "rtl"
+name = "RTL+"
+provider_ids = [2750]
+
+[[services]]
+key = "joyn"
+name = "Joyn"
+provider_ids = [304, 421]
+
+[[services]]
+key = "magenta"
+name = "MagentaTV"
+provider_ids = [178, 2412]
+
+# --- Kostenlos (mit Werbung / Mediatheken) – kein Abo nötig ---------------------------
+# Werden nur empfohlen, wenn "kostenlose Angebote einbeziehen" eingeschaltet ist.
+[[services]]
+key = "ard"
+name = "ARD Mediathek"
+provider_ids = [219]
+free = true
+
+[[services]]
+key = "zdf"
+name = "ZDF Mediathek"
+provider_ids = [537]
+free = true
+
+[[services]]
+key = "arte"
+name = "Arte"
+provider_ids = [234]
+free = true
+
+[[services]]
+key = "3sat"
+name = "3sat"
+provider_ids = [2211]
+free = true
+
+[[services]]
+key = "joyn_free"
+name = "Joyn (kostenlos)"
+provider_ids = [304]
+free = true
+
+[[services]]
+key = "prime_free"
+name = "Prime Video (kostenlos mit Werbung)"
+provider_ids = [613, 9, 2100]
+free = true
+
+[[services]]
+key = "pluto"
+name = "Pluto TV"
+provider_ids = [300]
+free = true
+
+[[services]]
+key = "plex"
+name = "Plex"
+provider_ids = [538]
+free = true
+
+[[services]]
+key = "netzkino"
+name = "Netzkino"
+provider_ids = [28]
+free = true
+
+[snapshot]
+# Ein Titel gilt erst als "nicht mehr im Abo", wenn er so viele Tage in Folge fehlt.
+removal_grace_runs = 2
+# Ist ein Snapshot um mehr als diesen Anteil kleiner als der gespeicherte Katalog,
+# wird der Lauf als "suspicious" markiert und nichts als weg gezählt.
+max_drop_ratio = 0.2
+
+[database]
+path = "data/moviebot.db"
