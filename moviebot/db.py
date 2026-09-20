@@ -6,7 +6,7 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 SCHEMA_FILE = Path(__file__).with_name("schema.sql")
 
 # Upgrade steps for existing databases: target version -> statements.
@@ -26,6 +26,7 @@ MIGRATIONS: dict[int, list[str]] = {
         "ALTER TABLE titles ADD COLUMN age_rating_raw TEXT",
         "ALTER TABLE titles ADD COLUMN ratings_fetched_at TEXT",
     ],
+    6: [],  # lists/list_items come from schema.sql
 }
 
 

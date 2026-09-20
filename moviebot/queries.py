@@ -27,6 +27,8 @@ NEWEST_SEASON_SQL = """COALESCE((SELECT MAX(s.air_date) FROM seasons s
       AND s.air_date <= date('now', 'localtime')), t.release_date)"""
 
 SORTS = {
+    # rowid as tie-breaker: two titles added within the same second keep their order
+    "list_added": "li.added_at DESC, li.rowid DESC",  # only with list_id
     "popularity": "t.popularity DESC",
     "rating": f"{WEIGHTED_RATING_SQL} DESC",
     "newest": "t.release_date DESC",
@@ -56,6 +58,8 @@ class TitleFilter:
     min_rating: float | None = None
     max_age: int | None = None             # age rating <= this
     include_unrated: bool = False          # with max_age: also titles without any age rating
+    list_id: int | None = None             # only titles on this list
+    only_available: bool | None = None     # None = True, except when a list is shown
     new_days: int | None = None            # only titles new in the selected services / new season
     show_seen: bool = False
     show_not_interested: bool = False
@@ -145,7 +149,18 @@ def _placeholders(values) -> str:
     return ",".join("?" * len(values))
 
 
-def _summary(row: sqlite3.Row, available: list[dict]) -> dict:
+def _lists_for(conn: sqlite3.Connection, title_ids: list[int]) -> dict[int, list[int]]:
+    if not title_ids:
+        return {}
+    result: dict[int, list[int]] = {}
+    for r in conn.execute(
+        f"""SELECT title_id, list_id FROM list_items WHERE title_id IN ({_placeholders(title_ids)})
+            ORDER BY list_id""", title_ids):
+        result.setdefault(r["title_id"], []).append(r["list_id"])
+    return result
+
+
+def _summary(row: sqlite3.Row, available: list[dict], in_lists: list[int] | None = None) -> dict:
     return {
         "id": row["id"],
         "media_type": row["media_type"],
@@ -163,6 +178,7 @@ def _summary(row: sqlite3.Row, available: list[dict]) -> dict:
         "age_rating_source": row["age_rating_source"],
         "age_rating_raw": row["age_rating_raw"],
         "available_on": available,
+        "in_lists": in_lists or [],
         "user": {"status": row["status"] or "unseen", "rating": row["rating"]},
     }
 
@@ -197,6 +213,8 @@ def search_titles(conn: sqlite3.Connection, f: TitleFilter, today: date | None =
     services = selected_services(conn, f.services, f.include_free)
     if f.sort not in SORTS:
         raise ValueError(f"Unbekannte Sortierung '{f.sort}'. Möglich: {', '.join(SORTS)}")
+    if f.sort == "list_added" and not f.list_id:
+        raise ValueError("Sortierung 'list_added' gibt es nur innerhalb einer Liste")
     order_by = sort_sql(f.sort, get_settings(conn)["series_newest"])
     if not services:
         return {"total": 0, "page": f.page, "page_size": f.page_size, "services": [], "items": []}
@@ -238,10 +256,18 @@ def search_titles(conn: sqlite3.Connection, f: TitleFilter, today: date | None =
               AND e.event_date >= ?))""")
         params += [since, since]
 
+    # A list may contain titles that are currently in none of the services; only then is the
+    # availability join optional.
+    require_available = f.only_available if f.only_available is not None else f.list_id is None
+    avail_join = "JOIN" if require_available else "LEFT JOIN"
+    list_join = "JOIN list_items li ON li.title_id = t.id AND li.list_id = ?" if f.list_id else ""
+    list_params = [f.list_id] if f.list_id else []
+
     # "added" = newest first_seen among the selected services, ignoring baseline entries
     base = f"""
         FROM titles t
-        JOIN (SELECT a.title_id,
+        {list_join}
+        {avail_join} (SELECT a.title_id,
                      MAX(CASE WHEN a.in_baseline = 0 THEN a.first_seen END) AS added
               FROM availability a
               WHERE a.removed_at IS NULL AND a.verified = 1
@@ -250,16 +276,20 @@ def search_titles(conn: sqlite3.Connection, f: TitleFilter, today: date | None =
         LEFT JOIN user_state us ON us.title_id = t.id
         WHERE {" AND ".join(where)}
     """
+    avail_params = list_params + avail_params
     total = conn.execute(f"SELECT COUNT(*) {base}", avail_params + params).fetchone()[0]
     rows = conn.execute(
         f"SELECT t.*, us.status, us.rating, avail.added {base} ORDER BY {order_by} "
         "LIMIT ? OFFSET ?",
         avail_params + params + [f.page_size, (f.page - 1) * f.page_size],
     ).fetchall()
-    available = _availability_for(conn, [r["id"] for r in rows], services)
+    ids = [r["id"] for r in rows]
+    # inside a list also show services that are not currently selected
+    available = _availability_for(conn, ids, None if f.list_id else services)
+    lists = _lists_for(conn, ids)
     return {
         "total": total, "page": f.page, "page_size": f.page_size, "services": services,
-        "items": [_summary(r, available.get(r["id"], [])) for r in rows],
+        "items": [_summary(r, available.get(r["id"], []), lists.get(r["id"], [])) for r in rows],
     }
 
 
@@ -271,7 +301,8 @@ def get_title(conn: sqlite3.Connection, title_id: int) -> dict | None:
     ).fetchone()
     if row is None:
         return None
-    result = _summary(row, _availability_for(conn, [title_id]).get(title_id, []))
+    result = _summary(row, _availability_for(conn, [title_id]).get(title_id, []),
+                      _lists_for(conn, [title_id]).get(title_id, []))
     service_by_provider = {
         p: {"key": s["key"], "free": bool(s["free"])}
         for s in conn.execute("SELECT key, provider_ids, free FROM services WHERE tracked = 1")
@@ -386,10 +417,13 @@ def list_events(conn: sqlite3.Connection, days: int, services: list[str] | None,
         """,
         [since, *selected, *selected],
     ).fetchall()
-    available = _availability_for(conn, list({r["id"] for r in rows}), selected)
+    ids = list({r["id"] for r in rows})
+    available = _availability_for(conn, ids, selected)
+    lists = _lists_for(conn, ids)
     return [
         {"event": r["event"], "date": r["event_date"], "season_number": r["season_number"],
-         "service": r["event_service"], "title": _summary(r, available.get(r["id"], []))}
+         "service": r["event_service"],
+         "title": _summary(r, available.get(r["id"], []), lists.get(r["id"], []))}
         for r in rows
     ]
 
@@ -424,3 +458,98 @@ def status(conn: sqlite3.Connection) -> dict:
         "titles_with_age_rating": counts["with_age"] or 0,
         "attribution": ATTRIBUTION,
     }
+
+
+# --- lists -------------------------------------------------------------------------
+
+MAX_LIST_NAME = 60
+
+
+def list_lists(conn: sqlite3.Connection) -> list[dict]:
+    rows = conn.execute(
+        """SELECT l.*, (SELECT COUNT(*) FROM list_items i WHERE i.list_id = l.id) AS count
+           FROM lists l ORDER BY l.is_default DESC, l.position, l.name COLLATE NOCASE"""
+    ).fetchall()
+    return [
+        {"id": r["id"], "name": r["name"], "kind": r["kind"], "is_default": bool(r["is_default"]),
+         "filters": json.loads(r["filters"]) if r["filters"] else None, "count": r["count"]}
+        for r in rows
+    ]
+
+
+def _one_list(conn: sqlite3.Connection, list_id: int) -> dict:
+    found = [entry for entry in list_lists(conn) if entry["id"] == list_id]
+    if not found:
+        raise LookupError(list_id)
+    return found[0]
+
+
+def _clean_name(name: str) -> str:
+    name = name.strip()
+    if not name:
+        raise ValueError("Der Name darf nicht leer sein")
+    if len(name) > MAX_LIST_NAME:
+        raise ValueError(f"Der Name darf höchstens {MAX_LIST_NAME} Zeichen haben")
+    return name
+
+
+def create_list(conn: sqlite3.Connection, name: str, kind: str = "manual",
+                filters: dict | None = None) -> dict:
+    if kind not in ("manual", "dynamic"):
+        raise ValueError("kind muss 'manual' oder 'dynamic' sein")
+    now = now_iso()
+    with conn:
+        list_id = conn.execute(
+            """INSERT INTO lists (name, kind, filters, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?) RETURNING id""",
+            (_clean_name(name), kind, json.dumps(filters, ensure_ascii=False) if filters else None,
+             now, now),
+        ).fetchone()[0]
+    return _one_list(conn, list_id)
+
+
+def update_list(conn: sqlite3.Connection, list_id: int, name: str | None = None,
+                is_default: bool | None = None, filters: dict | None = None) -> dict:
+    entry = _one_list(conn, list_id)
+    with conn:
+        if name is not None:
+            conn.execute("UPDATE lists SET name = ?, updated_at = ? WHERE id = ?",
+                         (_clean_name(name), now_iso(), list_id))
+        if filters is not None:
+            conn.execute("UPDATE lists SET filters = ?, updated_at = ? WHERE id = ?",
+                         (json.dumps(filters, ensure_ascii=False), now_iso(), list_id))
+        if is_default:
+            conn.execute("UPDATE lists SET is_default = 0 WHERE is_default = 1")
+            conn.execute("UPDATE lists SET is_default = 1, updated_at = ? WHERE id = ?",
+                         (now_iso(), list_id))
+        elif is_default is False and entry["is_default"]:
+            raise ValueError("Es muss eine Standardliste geben – lege stattdessen eine andere fest")
+    return _one_list(conn, list_id)
+
+
+def delete_list(conn: sqlite3.Connection, list_id: int) -> None:
+    entry = _one_list(conn, list_id)
+    if entry["is_default"]:
+        raise ValueError("Die Standardliste kann nicht gelöscht werden – "
+                         "lege zuerst eine andere Liste als Standard fest")
+    with conn:
+        conn.execute("DELETE FROM list_items WHERE list_id = ?", (list_id,))
+        conn.execute("DELETE FROM lists WHERE id = ?", (list_id,))
+
+
+def set_title_lists(conn: sqlite3.Connection, title_id: int, list_ids: list[int]) -> list[int]:
+    """Replace the list membership of one title. Returns the list ids it is on now."""
+    if conn.execute("SELECT 1 FROM titles WHERE id = ?", (title_id,)).fetchone() is None:
+        raise LookupError(title_id)
+    known = {r[0] for r in conn.execute("SELECT id FROM lists WHERE kind = 'manual'")}
+    unknown = [i for i in list_ids if i not in known]
+    if unknown:
+        raise ValueError(f"Unbekannte Listen: {', '.join(map(str, unknown))}")
+    now = now_iso()
+    with conn:
+        conn.execute("DELETE FROM list_items WHERE title_id = ?", (title_id,))
+        conn.executemany(
+            "INSERT INTO list_items (list_id, title_id, added_at) VALUES (?, ?, ?)",
+            [(list_id, title_id, now) for list_id in dict.fromkeys(list_ids)],
+        )
+    return _lists_for(conn, [title_id]).get(title_id, [])

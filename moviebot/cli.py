@@ -19,8 +19,7 @@ def make_client(cfg) -> TMDBClient:
 
 def open_db(cfg):
     conn = connect(cfg.db_path)
-    with conn:
-        catalog.sync_services(conn, cfg)
+    catalog.bootstrap(conn, cfg)
     return conn
 
 

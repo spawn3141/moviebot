@@ -272,3 +272,24 @@ def store_age_rating(conn: sqlite3.Connection, title_id: int, media_type: str, d
                   ratings_fetched_at = ? WHERE id = ?""",
         (age, source, raw, now_iso(), title_id),
     )
+
+
+DEFAULT_LIST_NAME = "Merkliste"
+
+
+def ensure_default_list(conn: sqlite3.Connection) -> None:
+    """Create the default watchlist on first start."""
+    if conn.execute("SELECT 1 FROM lists LIMIT 1").fetchone():
+        return
+    now = now_iso()
+    conn.execute(
+        "INSERT INTO lists (name, kind, is_default, created_at, updated_at) VALUES (?, 'manual', 1, ?, ?)",
+        (DEFAULT_LIST_NAME, now, now),
+    )
+
+
+def bootstrap(conn: sqlite3.Connection, cfg: Config) -> None:
+    """Bring the database in line with the config before serving or scanning."""
+    with conn:
+        sync_services(conn, cfg)
+        ensure_default_list(conn)

@@ -297,8 +297,8 @@ def run(conn: sqlite3.Connection, client: TMDBClient, cfg: Config, *,
         raise ValueError("Keine Dienste konfiguriert (config.toml → [[services]]).")
     services = [cfg.service(k) for k in service_keys] if service_keys else cfg.services
 
+    catalog.bootstrap(conn, cfg)
     with conn:
-        catalog.sync_services(conn, cfg)
         for media_type in ("movie", "tv"):
             catalog.upsert_providers(conn, client.watch_providers(media_type))
     for warning in check_provider_ids(conn, cfg):

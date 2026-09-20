@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { api } from '../api'
 import { MONETIZATION, TV_STATUS, ageLabel, durationLabel, formatDate } from '../format'
-import { currentState, updateUserState } from '../store'
+import { currentLists, currentState, lists, loadLists, setTitleLists, ui, updateUserState } from '../store'
 import StarRating from './StarRating.vue'
 
 const props = defineProps({ id: { type: Number, required: true } })
@@ -54,6 +54,7 @@ function onKey(e) {
   if (e.key === 'Escape') emit('close')
 }
 onMounted(() => {
+  loadLists()
   document.addEventListener('keydown', onKey)
   document.body.style.overflow = 'hidden'
   dialog.value?.focus()
@@ -110,6 +111,16 @@ onBeforeUnmount(() => {
               <span class="label">Meine Bewertung</span>
               <StarRating size="large" :model-value="state.rating"
                           @update:model-value="(r) => updateUserState(title, { rating: r })" />
+              <div class="buttons lists">
+                <button v-for="l in lists.items.filter((x) => x.kind === 'manual')" :key="l.id"
+                        type="button" :class="{ on: currentLists(title).includes(l.id) }"
+                        @click="setTitleLists(title, currentLists(title).includes(l.id)
+                          ? currentLists(title).filter((id) => id !== l.id)
+                          : [...currentLists(title), l.id])">
+                  {{ currentLists(title).includes(l.id) ? '★' : '☆' }} {{ l.name }}
+                </button>
+                <button type="button" @click="ui.pickerTitle = title">+ Neue Liste</button>
+              </div>
               <div class="buttons">
                 <button type="button" :class="{ on: state.status === 'seen' }" @click="toggle('seen')">
                   ✓ Gesehen

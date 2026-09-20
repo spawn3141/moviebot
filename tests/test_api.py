@@ -170,6 +170,59 @@ class ApiTest(unittest.TestCase):
         big = {"q": "x" * 5000}
         self.assertEqual(self.client.put("/api/settings", json={"discover_filters": big}).status_code, 400)
 
+    def test_default_list_exists(self):
+        lists = self.client.get("/api/lists").json()
+        self.assertEqual([(l["name"], l["kind"], l["is_default"], l["count"]) for l in lists],
+                         [("Merkliste", "manual", True, 0)])
+
+    def test_add_and_remove_titles(self):
+        merkliste = self.client.get("/api/lists").json()[0]["id"]
+        tid = self.ids["action"]
+        r = self.client.put(f"/api/titles/{tid}/lists", json={"list_ids": [merkliste]})
+        self.assertEqual(r.json(), [merkliste])
+        self.assertEqual(self.client.get("/api/lists").json()[0]["count"], 1)
+        item = self.client.get("/api/titles", params={"list_id": merkliste}).json()["items"][0]
+        self.assertEqual((item["title"], item["in_lists"]), ("Action A", [merkliste]))
+        self.client.put(f"/api/titles/{tid}/lists", json={"list_ids": []})
+        self.assertEqual(self.client.get("/api/titles", params={"list_id": merkliste}).json()["total"], 0)
+        self.assertEqual(self.client.put("/api/titles/99999/lists", json={"list_ids": []}).status_code, 404)
+        self.assertEqual(self.client.put(f"/api/titles/{tid}/lists", json={"list_ids": [999]}).status_code, 400)
+
+    def test_list_shows_titles_that_are_not_available(self):
+        merkliste = self.client.get("/api/lists").json()[0]["id"]
+        gone = self.ids["removed"]  # no longer in any service
+        self.client.put(f"/api/titles/{gone}/lists", json={"list_ids": [merkliste]})
+        items = self.client.get("/api/titles", params={"list_id": merkliste}).json()["items"]
+        self.assertEqual([(i["title"], i["available_on"]) for i in items], [("Weg F", [])])
+        # ... unless only available ones are wanted
+        self.assertEqual(self.client.get("/api/titles", params={"list_id": merkliste, "only_available": True})
+                         .json()["total"], 0)
+
+    def test_create_rename_default_and_delete(self):
+        merkliste = self.client.get("/api/lists").json()[0]["id"]
+        created = self.client.post("/api/lists", json={"name": "  Heute Abend  "})
+        self.assertEqual(created.status_code, 201)
+        new_id = created.json()["id"]
+        self.assertEqual(created.json()["name"], "Heute Abend")
+        self.assertEqual(self.client.post("/api/lists", json={"name": " "}).status_code, 400)
+        renamed = self.client.patch(f"/api/lists/{new_id}", json={"name": "Mit Anna"})
+        self.assertEqual(renamed.json()["name"], "Mit Anna")
+        # the default list cannot be deleted, but the default can move
+        self.assertEqual(self.client.delete(f"/api/lists/{merkliste}").status_code, 400)
+        self.client.patch(f"/api/lists/{new_id}", json={"is_default": True})
+        defaults = [l["id"] for l in self.client.get("/api/lists").json() if l["is_default"]]
+        self.assertEqual(defaults, [new_id])
+        self.assertEqual(self.client.delete(f"/api/lists/{merkliste}").status_code, 204)
+        self.assertEqual(self.client.delete(f"/api/lists/{merkliste}").status_code, 404)
+
+    def test_list_sorting_by_added(self):
+        merkliste = self.client.get("/api/lists").json()[0]["id"]
+        for key in ("lucky", "action"):
+            self.client.put(f"/api/titles/{self.ids[key]}/lists", json={"list_ids": [merkliste]})
+        titles = self.titles(list_id=merkliste, sort="list_added")
+        self.assertEqual(titles, ["Action A", "Zufall G"])  # most recently added first
+        self.assertEqual(self.client.get("/api/titles", params={"sort": "list_added"}).status_code, 400)
+
     def test_new_feed(self):
         events = self.client.get("/api/new", params={"days": 7}).json()
         self.assertEqual([(e["event"], e["title"]["title"]) for e in events],

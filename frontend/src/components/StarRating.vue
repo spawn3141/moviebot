@@ -34,8 +34,8 @@ function pick(n) {
 <style scoped>
 .stars { display: inline-flex; }
 .stars button {
-  background: none; border: 0; padding: 0 1px; cursor: pointer;
-  color: var(--star-off); font-size: 1rem; line-height: 1;
+  background: none; border: 0; padding: 0; cursor: pointer;
+  color: var(--star-off); font-size: .95rem; line-height: 1;
 }
 .stars.large button { font-size: 1.6rem; padding: 0 2px; }
 .stars button.filled { color: var(--accent); }

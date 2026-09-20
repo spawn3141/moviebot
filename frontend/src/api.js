@@ -17,6 +17,7 @@ async function request(method, path, { params, body } = {}) {
     headers: body ? { 'Content-Type': 'application/json' } : {},
     body: body ? JSON.stringify(body) : undefined,
   })
+  if (res.status === 204) return null
   if (!res.ok) {
     let message = `${res.status} ${res.statusText}`
     try {
@@ -42,4 +43,9 @@ export const api = {
   updateSettings: (body) => request('PUT', '/api/settings', { body }),
   status: () => request('GET', '/api/status'),
   startSnapshot: () => request('POST', '/api/snapshot'),
+  lists: () => request('GET', '/api/lists'),
+  createList: (name) => request('POST', '/api/lists', { body: { name } }),
+  updateList: (id, body) => request('PATCH', `/api/lists/${id}`, { body }),
+  deleteList: (id) => request('DELETE', `/api/lists/${id}`),
+  setTitleLists: (id, listIds) => request('PUT', `/api/titles/${id}/lists`, { body: { list_ids: listIds } }),
 }

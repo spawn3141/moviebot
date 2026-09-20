@@ -128,6 +128,28 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS idx_events_date ON events (event_date, event);
 
+-- Watchlists. 'manual' lists hold fixed titles; 'dynamic' lists (later) store a filter in
+-- `filters` and compute their content on the fly.
+CREATE TABLE IF NOT EXISTS lists (
+    id         INTEGER PRIMARY KEY,
+    name       TEXT NOT NULL,
+    kind       TEXT NOT NULL DEFAULT 'manual' CHECK (kind IN ('manual', 'dynamic')),
+    filters    TEXT,                            -- JSON, only for kind = 'dynamic'
+    is_default INTEGER NOT NULL DEFAULT 0,      -- target of the quick "merken" button
+    position   INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_lists_one_default ON lists (is_default) WHERE is_default = 1;
+
+CREATE TABLE IF NOT EXISTS list_items (
+    list_id  INTEGER NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
+    title_id INTEGER NOT NULL REFERENCES titles(id),
+    added_at TEXT NOT NULL,
+    PRIMARY KEY (list_id, title_id)
+);
+CREATE INDEX IF NOT EXISTS idx_list_items_title ON list_items (title_id);
+
 CREATE TABLE IF NOT EXISTS user_state (
     title_id   INTEGER PRIMARY KEY REFERENCES titles(id),
     status     TEXT NOT NULL DEFAULT 'unseen'

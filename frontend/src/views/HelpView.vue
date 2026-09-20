@@ -103,6 +103,22 @@ onMounted(async () => {
     </section>
 
     <section>
+      <h2>Listen</h2>
+      <p>
+        Das ☆ auf einer Kachel merkt einen Titel in der Standardliste („Merkliste“). Über
+        „Listen wählen“ in der Meldung unten oder über die Detailansicht kannst du ihn in
+        beliebig viele Listen legen – oder in keine.
+      </p>
+      <p>
+        Unter <RouterLink to="/listen">Listen</RouterLink> verwaltest du sie: anlegen, umbenennen,
+        löschen und festlegen, welche die Standardliste ist. Innerhalb einer Liste entfernt das ★
+        den Titel aus genau dieser Liste. Titel, die gerade in keinem deiner Dienste laufen,
+        bleiben in der Liste und sind als „nicht verfügbar“ markiert; mit „nur verfügbare“
+        blendest du sie aus. Gesehenes wird hier nicht automatisch entfernt.
+      </p>
+    </section>
+
+    <section>
       <h2>Woher die Daten kommen</h2>
       <p>
         Titel, Beschreibungen, Poster und Bewertungen stammen von

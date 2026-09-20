@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import queries
+from . import catalog, queries
 from .config import Config
 from .db import connect
 from .scheduler import SnapshotScheduler
@@ -21,7 +21,7 @@ WEB_DIR = Path(__file__).with_name("web")
 
 MediaType = Literal["movie", "tv"]
 Status = Literal["unseen", "seen", "not_interested"]
-Sort = Literal["popularity", "rating", "newest", "added", "title"]
+Sort = Literal["popularity", "rating", "newest", "added", "title", "list_added"]
 
 
 # --- response/request models (they also document the API under /docs) ---------------
@@ -58,6 +58,7 @@ class TitleSummary(BaseModel):
         description="fsk = deutsche Freigabe, us = aus US-Freigabe umgerechnet")
     age_rating_raw: str | None = Field(description="Originalangabe, z. B. '12' oder 'PG-13'")
     available_on: list[Availability]
+    in_lists: list[int] = Field(description="IDs der Listen, auf denen der Titel steht")
     user: UserState
 
 
@@ -107,6 +108,32 @@ class StateUpdate(BaseModel):
     rating: int | None = Field(default=None, ge=1, le=5,
                                description="1–5, null löscht die Bewertung. Setzt 'seen', "
                                            "wenn kein Status mitgeschickt wird.")
+
+
+class TitleList(BaseModel):
+    id: int
+    name: str
+    kind: Literal["manual", "dynamic"]
+    is_default: bool
+    filters: dict | None = Field(description="nur bei dynamischen Listen (noch nicht nutzbar)")
+    count: int
+
+
+class ListCreate(BaseModel):
+    name: str
+    kind: Literal["manual", "dynamic"] = "manual"
+    filters: dict | None = None
+
+
+class ListUpdate(BaseModel):
+    name: str | None = None
+    is_default: bool | None = None
+    filters: dict | None = None
+
+
+class TitleListsUpdate(BaseModel):
+    list_ids: list[int] = Field(description="Listen, auf denen der Titel danach steht "
+                                            "(leer = von allen entfernen)")
 
 
 class Service(BaseModel):
@@ -187,7 +214,9 @@ class SnapshotStarted(BaseModel):
 
 def create_app(cfg: Config, scheduler: SnapshotScheduler | None = None) -> FastAPI:
     # Create/migrate the schema once at startup; requests then use plain connections.
-    connect(cfg.db_path).close()
+    conn = connect(cfg.db_path)
+    catalog.bootstrap(conn, cfg)
+    conn.close()
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -235,6 +264,9 @@ def create_app(cfg: Config, scheduler: SnapshotScheduler | None = None) -> FastA
         year_to: int | None = None,
         q: Annotated[str | None, Query(description="Suche im Titel")] = None,
         min_rating: Annotated[float | None, Query(ge=0, le=10)] = None,
+        list_id: Annotated[int | None, Query(description="Nur Titel auf dieser Liste")] = None,
+        only_available: Annotated[bool | None, Query(
+            description="Nur aktuell verfügbare Titel (Standard: ja, in Listen nein)")] = None,
         max_age: Annotated[int | None, Query(
             ge=0, le=18, description="Nur Titel mit Altersfreigabe bis zu diesem Alter")] = None,
         include_unrated: Annotated[bool, Query(
@@ -251,6 +283,7 @@ def create_app(cfg: Config, scheduler: SnapshotScheduler | None = None) -> FastA
             services=services, include_free=include_free, media_type=media_type,
             genres=genre or [], year_from=year_from, year_to=year_to, q=q,
             min_rating=min_rating, max_age=max_age, include_unrated=include_unrated,
+            list_id=list_id, only_available=only_available,
             new_days=new_days, show_seen=show_seen,
             show_not_interested=show_not_interested, sort=sort, page=page, page_size=page_size,
         )
@@ -277,6 +310,46 @@ def create_app(cfg: Config, scheduler: SnapshotScheduler | None = None) -> FastA
             return queries.set_user_state(conn, title_id, changes)
         except LookupError:
             raise HTTPException(status_code=404, detail="Titel nicht gefunden")
+
+    @app.put("/api/titles/{title_id}/lists", response_model=list[int], tags=["Listen"],
+             summary="Listen eines Titels setzen")
+    def update_title_lists(conn: Conn, title_id: int, body: TitleListsUpdate):
+        try:
+            return queries.set_title_lists(conn, title_id, body.list_ids)
+        except LookupError:
+            raise HTTPException(status_code=404, detail="Titel nicht gefunden")
+        except ValueError as e:
+            raise bad_request(e)
+
+    @app.get("/api/lists", response_model=list[TitleList], tags=["Listen"])
+    def lists(conn: Conn):
+        return queries.list_lists(conn)
+
+    @app.post("/api/lists", response_model=TitleList, status_code=201, tags=["Listen"])
+    def create_list(conn: Conn, body: ListCreate):
+        try:
+            return queries.create_list(conn, body.name, body.kind, body.filters)
+        except ValueError as e:
+            raise bad_request(e)
+
+    @app.patch("/api/lists/{list_id}", response_model=TitleList, tags=["Listen"],
+               summary="Liste umbenennen oder als Standard festlegen")
+    def update_list(conn: Conn, list_id: int, body: ListUpdate):
+        try:
+            return queries.update_list(conn, list_id, body.name, body.is_default, body.filters)
+        except LookupError:
+            raise HTTPException(status_code=404, detail="Liste nicht gefunden")
+        except ValueError as e:
+            raise bad_request(e)
+
+    @app.delete("/api/lists/{list_id}", status_code=204, tags=["Listen"])
+    def delete_list(conn: Conn, list_id: int):
+        try:
+            queries.delete_list(conn, list_id)
+        except LookupError:
+            raise HTTPException(status_code=404, detail="Liste nicht gefunden")
+        except ValueError as e:
+            raise bad_request(e)
 
     @app.get("/api/new", response_model=list[Event], tags=["Titel"],
              summary="Neu in meinen Diensten (Neuzugänge und neue Staffeln)")

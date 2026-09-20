@@ -1,17 +1,22 @@
 <script setup>
 import { computed } from 'vue'
 import { ageLabel } from '../format'
-import { currentState, ui, updateUserState } from '../store'
+import { currentLists, currentState, toggleList, ui, updateUserState } from '../store'
 import StarRating from './StarRating.vue'
 
 const props = defineProps({
   item: { type: Object, required: true },
   badge: { type: String, default: '' },
+  // inside a list view the bookmark toggles that list instead of the default one
+  listId: { type: Number, default: null },
 })
 
 const state = computed(() => currentState(props.item))
 const services = computed(() => props.item.available_on.map((a) => a.name).join(' · '))
 const age = computed(() => ageLabel(props.item))
+const onList = computed(() => (props.listId
+  ? currentLists(props.item).includes(props.listId)
+  : currentLists(props.item).length > 0))
 
 function toggle(status) {
   updateUserState(props.item, { status: state.value.status === status ? 'unseen' : status })
@@ -38,6 +43,9 @@ function toggle(status) {
                 :title="state.status === 'seen' ? 'Doch nicht gesehen' : 'Gesehen'"
                 @click="toggle('seen')">✓</button>
         <StarRating :model-value="state.rating" @update:model-value="(r) => updateUserState(item, { rating: r })" />
+        <button type="button" class="icon" :class="{ on: onList }"
+                :title="onList ? (listId ? 'Aus dieser Liste entfernen' : 'Aus der Liste entfernen') : 'Merken'"
+                @click="toggleList(item, listId)">{{ onList ? '★' : '☆' }}</button>
         <button type="button" class="icon" :class="{ on: state.status === 'not_interested' }"
                 :title="state.status === 'not_interested' ? 'Wieder anzeigen' : 'Nicht interessiert'"
                 @click="toggle('not_interested')">✕</button>
@@ -72,10 +80,10 @@ function toggle(status) {
 h3 { margin: 0; font-size: .95rem; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .meta, .services { margin: 0; font-size: .78rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .services { color: var(--text-soft); }
-.actions { display: flex; align-items: center; justify-content: space-between; margin-top: auto; padding-top: 6px; }
+.actions { display: flex; align-items: center; justify-content: space-between; gap: 2px; margin-top: auto; padding-top: 6px; }
 .icon {
   background: var(--panel-2); border: 1px solid var(--border); color: var(--muted);
-  width: 30px; height: 30px; border-radius: 8px; cursor: pointer; font-size: .9rem;
+  width: 28px; height: 28px; border-radius: 8px; cursor: pointer; font-size: .85rem; padding: 0;
 }
 .icon:hover { color: var(--text); border-color: var(--border-strong); }
 .icon.on { background: var(--accent-2); border-color: var(--accent-2); color: #fff; }
