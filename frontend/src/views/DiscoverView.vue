@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api'
 import { currentState } from '../store'
@@ -60,6 +60,14 @@ const visible = computed(() =>
     return s === 'unseen' || (s === 'seen' && f.show_seen)
   }))
 
+let saveTimer
+function saveFilters() {
+  clearTimeout(saveTimer)
+  saveTimer = setTimeout(() => {
+    api.updateSettings({ discover_filters: { ...f } }).catch(() => {})
+  }, 600)
+}
+
 let requestId = 0
 async function load(reset = true) {
   const id = ++requestId
@@ -90,6 +98,7 @@ watch(f, () => {
   const query = Object.fromEntries(
     Object.entries(f).filter(([k, v]) => (Array.isArray(v) ? v.length : v !== DEFAULTS[k])))
   router.replace({ query })
+  saveFilters()
   load()
 }, { deep: true })
 
@@ -107,13 +116,25 @@ function toggleIn(list, value) {
   else list.splice(i, 1)
 }
 
+onBeforeUnmount(() => clearTimeout(saveTimer))
+
 function reset() {
   Object.assign(f, { ...DEFAULTS, genre: [], services: [] })
   search.value = ''
 }
 
 onMounted(async () => {
-  load()
+  // A link with filters wins; otherwise restore what was used last.
+  let restored = false
+  if (!Object.keys(route.query).length) {
+    const settings = await api.settings().catch(() => null)
+    if (settings?.discover_filters) {
+      Object.assign(f, { ...DEFAULTS, ...settings.discover_filters })
+      search.value = f.q
+      restored = true // the watcher on `f` loads and updates the URL
+    }
+  }
+  if (!restored) load()
   loadGenres()
   services.value = await api.services()
   status.value = await api.status()

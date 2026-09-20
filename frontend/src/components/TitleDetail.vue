@@ -25,6 +25,13 @@ watch(() => props.id, load, { immediate: true })
 
 const state = computed(() => (title.value ? currentState(title.value) : null))
 
+// newest season that has already started
+const latestSeason = computed(() => {
+  const today = new Date().toISOString().slice(0, 10)
+  const released = (title.value?.seasons ?? []).filter((s) => s.air_date && s.air_date <= today)
+  return released.length ? released[released.length - 1] : null
+})
+
 // Offers grouped by kind, e.g. { "Leihen": ["Apple TV", "Amazon Video"] }
 const offerGroups = computed(() => {
   if (!title.value) return []
@@ -80,6 +87,19 @@ onBeforeUnmount(() => {
               <span v-if="durationLabel(title)">{{ durationLabel(title) }}</span>
               <span v-if="title.tv_status">{{ TV_STATUS[title.tv_status] ?? title.tv_status }}</span>
               <span v-if="ageLabel(title)" class="age">{{ ageLabel(title).long }}</span>
+            </p>
+            <p class="dates">
+              <template v-if="title.media_type === 'movie'">
+                <span v-if="title.release_date">Erschienen: {{ formatDate(title.release_date) }}</span>
+              </template>
+              <template v-else>
+                <span v-if="title.release_date">Erste Folge: {{ formatDate(title.release_date) }}</span>
+                <span v-if="latestSeason">
+                  Neueste Staffel: {{ latestSeason.name || `Staffel ${latestSeason.season_number}` }}
+                  seit {{ formatDate(latestSeason.air_date) }}
+                </span>
+                <span v-if="title.last_air_date">Letzte Folge: {{ formatDate(title.last_air_date) }}</span>
+              </template>
             </p>
             <p class="genres">{{ title.genres.join(' · ') }}</p>
             <p v-if="title.vote_average" class="tmdb-score">
@@ -158,6 +178,7 @@ onBeforeUnmount(() => {
           <p v-else class="hint">Die vollständige Angebotsliste für diesen Titel wurde noch nicht geladen.</p>
           <p class="links">
             <a v-if="title.watch_link" :href="title.watch_link" target="_blank" rel="noopener">Alle Angebote (JustWatch) ↗</a>
+            <a v-if="title.imdb_url" :href="title.imdb_url" target="_blank" rel="noopener">Auf IMDb ansehen ↗</a>
             <a :href="title.tmdb_url" target="_blank" rel="noopener">Auf TMDB ansehen ↗</a>
           </p>
         </section>
@@ -187,6 +208,7 @@ h2 { margin: 0 40px 2px 0; font-size: 1.5rem; line-height: 1.2; }
 .original { margin: 0 0 6px; color: var(--muted); font-style: italic; }
 .meta { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 6px 0; color: var(--text-soft); font-size: .9rem; }
 .meta .age { border: 1px solid var(--border-strong); border-radius: 6px; padding: 0 6px; }
+.dates { display: flex; flex-direction: column; gap: 2px; margin: 0 0 8px; color: var(--text-soft); font-size: .85rem; }
 .genres { margin: 0 0 6px; color: var(--muted); font-size: .9rem; }
 .tmdb-score { margin: 0 0 14px; color: var(--accent); font-weight: 600; }
 .tmdb-score small { color: var(--muted); font-weight: 400; }

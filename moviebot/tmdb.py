@@ -139,7 +139,7 @@ class TMDBClient:
         return self.get(
             f"/{media_type}/{tmdb_id}",
             {"language": self.language,
-             "append_to_response": f"keywords,credits,watch/providers,{ratings}"},
+             "append_to_response": f"keywords,credits,watch/providers,external_ids,{ratings}"},
         )
 
     def discover_catalog(self, media_type: str, provider_ids: list[int],

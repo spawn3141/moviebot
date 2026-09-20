@@ -98,6 +98,7 @@ class TitleDetail(TitleSummary):
     offers_known: bool = Field(description="false = Angebotsdaten noch nicht geladen")
     watch_link: str | None
     tmdb_url: str
+    imdb_url: str | None = Field(description="null = IMDb-Nummer (noch) nicht bekannt")
     attribution: str
 
 
@@ -123,10 +124,17 @@ class ServiceUpdate(BaseModel):
 
 class Settings(BaseModel):
     include_free: bool = Field(description="Kostenlose Angebote bei 'meine Dienste' einbeziehen")
+    series_newest: Literal["season", "first"] = Field(
+        description="Sortierung 'Neueste zuerst' bei Serien: Start der neuesten Staffel "
+                    "oder Start der Serie")
+    discover_filters: dict | None = Field(
+        description="Zuletzt benutzte Filter und Sortierung der Oberfläche")
 
 
 class SettingsUpdate(BaseModel):
     include_free: bool | None = None
+    series_newest: Literal["season", "first"] | None = None
+    discover_filters: dict | None = None
 
 
 class Genre(BaseModel):
@@ -306,7 +314,12 @@ def create_app(cfg: Config, scheduler: SnapshotScheduler | None = None) -> FastA
 
     @app.put("/api/settings", response_model=Settings, tags=["Dienste & Einstellungen"])
     def update_settings(conn: Conn, body: SettingsUpdate):
-        return queries.update_settings(conn, include_free=body.include_free)
+        try:
+            return queries.update_settings(conn, include_free=body.include_free,
+                                           series_newest=body.series_newest,
+                                           discover_filters=body.discover_filters)
+        except ValueError as e:
+            raise bad_request(e)
 
     @app.get("/api/status", response_model=Status_, tags=["System"])
     def status(conn: Conn):

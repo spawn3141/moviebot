@@ -60,6 +60,10 @@ class ApiTest(unittest.TestCase):
                          "WHERE id = ?", (self.ids["action"],))
             conn.execute("INSERT INTO offers (title_id, provider_id, monetization, updated_at) "
                          "VALUES (?, 9, 'flatrate', 'x')", (self.ids["action"],))
+            conn.executemany(
+                "INSERT INTO seasons (title_id, season_number, air_date) VALUES (?, ?, ?)",
+                [(self.ids["series"], 1, "2019-03-01"), (self.ids["series"], 2, DAYS_AGO_2),
+                 (self.ids["series"], 3, "2099-01-01")])  # season 3 not aired yet
             conn.execute("INSERT INTO events (title_id, service, event, event_date) VALUES (?, 'wow', 'added', ?)",
                          (self.ids["series"], DAYS_AGO_2))
             conn.execute("INSERT INTO events (title_id, event, season_number, event_date) "
@@ -86,6 +90,15 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(self.titles(services="netflix"), ["Netflix C"])
         self.assertEqual(self.titles(include_free=True), ["Action A", "Serie B", "Frei D", "Zufall G"])
         self.assertEqual(self.titles(new_days=7), ["Serie B"])
+
+    def test_newest_sort_uses_latest_season_for_series(self):
+        # default: the series' newest season (2 days ago) beats the 2025 movies
+        self.assertEqual(self.titles(sort="newest")[0], "Serie B")
+        r = self.client.put("/api/settings", json={"series_newest": "first"})
+        self.assertEqual(r.json()["series_newest"], "first")
+        # now the series counts with its 2019 start and drops behind the movies
+        self.assertEqual(self.titles(sort="newest")[-1], "Serie B")
+        self.assertEqual(self.client.put("/api/settings", json={"series_newest": "x"}).status_code, 422)
 
     def test_age_filter(self):
         self.assertEqual(self.titles(max_age=12), ["Serie B"])
@@ -125,6 +138,7 @@ class ApiTest(unittest.TestCase):
         d = r.json()
         self.assertEqual(d["offers"], [{"provider_id": 9, "provider": "Amazon Prime Video",
                                         "monetization": "flatrate", "service": "prime"}])
+        self.assertIsNone(d["imdb_url"])
         self.assertEqual([a["service"] for a in d["available_on"]], ["prime"])
         self.assertEqual(d["available_on"][0]["since"], "2026-09-19")
         self.assertTrue(d["available_on"][0]["baseline"])
@@ -143,6 +157,18 @@ class ApiTest(unittest.TestCase):
         self.assertIn("Frei D", self.titles())
         services = {s["key"]: s for s in self.client.get("/api/services").json()}
         self.assertEqual((services["prime"]["movies"], services["wow"]["series"]), (2, 1))
+
+    def test_discover_filters_are_remembered(self):
+        self.assertIsNone(self.client.get("/api/settings").json()["discover_filters"])
+        filters = {"genre": ["Action"], "sort": "rating", "media_type": "tv"}
+        r = self.client.put("/api/settings", json={"discover_filters": filters})
+        self.assertEqual(r.json()["discover_filters"], filters)
+        self.assertEqual(self.client.get("/api/settings").json()["discover_filters"], filters)
+        # unrelated settings stay untouched
+        self.client.put("/api/settings", json={"include_free": True})
+        self.assertEqual(self.client.get("/api/settings").json()["discover_filters"], filters)
+        big = {"q": "x" * 5000}
+        self.assertEqual(self.client.put("/api/settings", json={"discover_filters": big}).status_code, 400)
 
     def test_new_feed(self):
         events = self.client.get("/api/new", params={"days": 7}).json()

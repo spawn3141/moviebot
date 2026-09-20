@@ -30,6 +30,14 @@ async function toggleService(s) {
   }
 }
 
+async function setSeriesNewest(value) {
+  try {
+    settings.value = await api.updateSettings({ series_newest: value })
+  } catch (e) {
+    showToast(`Konnte nicht speichern: ${e.message}`)
+  }
+}
+
 async function toggleFree() {
   try {
     settings.value = await api.updateSettings({ include_free: !settings.value.include_free })
@@ -108,6 +116,29 @@ onMounted(async () => {
         </li>
       </ul>
       <p class="muted small">{{ free.map((s) => `${s.name} (${s.movies + s.series})`).join(' · ') }}</p>
+    </section>
+
+    <section>
+      <h2>Sortierung</h2>
+      <p class="muted">Was bei „Neueste zuerst“ für eine Serie zählt:</p>
+      <ul class="list">
+        <li>
+          <label class="switch-row">
+            <span class="name">Start der neuesten Staffel</span>
+            <span class="counts">Serien mit neuer Staffel stehen weit oben</span>
+            <input type="radio" name="series-newest" :checked="settings.series_newest === 'season'"
+                   @change="setSeriesNewest('season')" />
+          </label>
+        </li>
+        <li>
+          <label class="switch-row">
+            <span class="name">Start der Serie</span>
+            <span class="counts">wie bei Filmen: das ursprüngliche Erscheinungsdatum</span>
+            <input type="radio" name="series-newest" :checked="settings.series_newest === 'first'"
+                   @change="setSeriesNewest('first')" />
+          </label>
+        </li>
+      </ul>
     </section>
 
     <section v-if="status">

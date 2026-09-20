@@ -20,6 +20,12 @@ WEIGHTED_RATING_SQL = (
     f"{RATING_PRIOR_VOTES} * {RATING_PRIOR_MEAN}) / (COALESCE(t.vote_count, 0) + {RATING_PRIOR_VOTES}))"
 )
 
+# "Neueste zuerst": for series either the start of the newest released season (default) or,
+# like movies, the first release.
+NEWEST_SEASON_SQL = """COALESCE((SELECT MAX(s.air_date) FROM seasons s
+    WHERE s.title_id = t.id AND s.season_number > 0
+      AND s.air_date <= date('now', 'localtime')), t.release_date)"""
+
 SORTS = {
     "popularity": "t.popularity DESC",
     "rating": f"{WEIGHTED_RATING_SQL} DESC",
@@ -27,6 +33,15 @@ SORTS = {
     "added": "added DESC, t.popularity DESC",
     "title": "t.title COLLATE NOCASE ASC",
 }
+
+SERIES_NEWEST = ("season", "first")  # setting values for the "newest" sort
+MAX_FILTER_JSON = 4000  # stored filter state is small; guard against junk
+
+
+def sort_sql(sort: str, series_newest: str) -> str:
+    if sort == "newest" and series_newest == "season":
+        return f"{NEWEST_SEASON_SQL} DESC"
+    return SORTS[sort]
 
 
 @dataclass
@@ -52,13 +67,31 @@ class TitleFilter:
 # --- settings & services ---------------------------------------------------------
 
 def get_settings(conn: sqlite3.Connection) -> dict:
-    return {"include_free": get_setting(conn, "include_free") == "1"}
+    return {
+        "include_free": get_setting(conn, "include_free") == "1",
+        "series_newest": get_setting(conn, "series_newest") or "season",
+        # last used filters/sorting of the Discover page, so navigating away does not lose them
+        "discover_filters": json.loads(get_setting(conn, "discover_filters") or "null"),
+    }
 
 
-def update_settings(conn: sqlite3.Connection, include_free: bool | None = None) -> dict:
+def update_settings(conn: sqlite3.Connection, include_free: bool | None = None,
+                    series_newest: str | None = None,
+                    discover_filters: dict | None = None) -> dict:
+    if series_newest is not None and series_newest not in SERIES_NEWEST:
+        raise ValueError(f"series_newest muss {' oder '.join(SERIES_NEWEST)} sein")
+    filters_json = None
+    if discover_filters is not None:
+        filters_json = json.dumps(discover_filters, ensure_ascii=False)
+        if len(filters_json) > MAX_FILTER_JSON:
+            raise ValueError("discover_filters ist zu groß")
     with conn:
         if include_free is not None:
             set_setting(conn, "include_free", "1" if include_free else "0")
+        if series_newest is not None:
+            set_setting(conn, "series_newest", series_newest)
+        if filters_json is not None:
+            set_setting(conn, "discover_filters", filters_json)
     return get_settings(conn)
 
 
@@ -164,6 +197,7 @@ def search_titles(conn: sqlite3.Connection, f: TitleFilter, today: date | None =
     services = selected_services(conn, f.services, f.include_free)
     if f.sort not in SORTS:
         raise ValueError(f"Unbekannte Sortierung '{f.sort}'. Möglich: {', '.join(SORTS)}")
+    order_by = sort_sql(f.sort, get_settings(conn)["series_newest"])
     if not services:
         return {"total": 0, "page": f.page, "page_size": f.page_size, "services": [], "items": []}
 
@@ -218,7 +252,7 @@ def search_titles(conn: sqlite3.Connection, f: TitleFilter, today: date | None =
     """
     total = conn.execute(f"SELECT COUNT(*) {base}", avail_params + params).fetchone()[0]
     rows = conn.execute(
-        f"SELECT t.*, us.status, us.rating, avail.added {base} ORDER BY {SORTS[f.sort]} "
+        f"SELECT t.*, us.status, us.rating, avail.added {base} ORDER BY {order_by} "
         "LIMIT ? OFFSET ?",
         avail_params + params + [f.page_size, (f.page - 1) * f.page_size],
     ).fetchall()
@@ -275,6 +309,7 @@ def get_title(conn: sqlite3.Connection, title_id: int) -> dict | None:
         "offers_known": row["offers_fetched_at"] is not None,
         "watch_link": row["watch_link"],
         "tmdb_url": f"https://www.themoviedb.org/{row['media_type']}/{row['tmdb_id']}",
+        "imdb_url": f"https://www.imdb.com/title/{row['imdb_id']}/" if row["imdb_id"] else None,
         "attribution": ATTRIBUTION,
     })
     return result

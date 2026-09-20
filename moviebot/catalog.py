@@ -108,7 +108,9 @@ def upsert_details(conn: sqlite3.Connection, media_type: str, details: dict) -> 
         "genres": _dumps([g["name"] for g in details.get("genres", [])]),
         "keywords": _dumps(keywords), "directors": _dumps(directors),
         "cast_members": _dumps(cast[:CAST_LIMIT]), "runtime": runtime,
-        "imdb_id": details.get("imdb_id"), "now": now,
+        # movies carry imdb_id directly, series only in external_ids
+        "imdb_id": details.get("imdb_id") or details.get("external_ids", {}).get("imdb_id"),
+        "now": now,
     }
     title_id = conn.execute(
         """

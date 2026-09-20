@@ -224,13 +224,14 @@ def fake_details(media_type: str, tmdb_id: int, flatrate: list[int], seasons=Non
         "content_ratings": {"results": [{"iso_3166_1": "DE", "rating": "6"}]},
     }
     if media_type == "movie":
-        d.update(title=f"T{tmdb_id}", release_date="2025-05-01",
+        d.update(title=f"T{tmdb_id}", release_date="2025-05-01", imdb_id="tt0000001",
                  keywords={"keywords": [{"name": "heist"}]})
     else:
         d.update(name=f"S{tmdb_id}", first_air_date="2019-03-01", last_air_date="2026-08-01",
                  status="Returning Series", number_of_seasons=len(seasons or []),
                  created_by=[{"name": "C"}], episode_run_time=[45],
-                 keywords={"results": [{"name": "spy"}]}, seasons=seasons or [])
+                 keywords={"results": [{"name": "spy"}]}, seasons=seasons or [],
+                 external_ids={"imdb_id": "tt0000002"})
     return d
 
 
@@ -304,6 +305,7 @@ class DetailsTest(unittest.TestCase):
         self.assertEqual((t["directors"], t["keywords"], t["runtime"], t["year"]),
                          ('["C"]', '["spy"]', 45, 2019))
         self.assertEqual((t["age_rating"], t["age_rating_source"]), (6, "fsk"))
+        self.assertEqual(t["imdb_id"], "tt0000002")  # series: only in external_ids
         # same day: nothing to do
         snapshot.update_details(self.conn, client, self.cfg, date.today())
         self.assertEqual(client.calls, 1)
