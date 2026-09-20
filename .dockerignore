@@ -1,0 +1,13 @@
+# Nichts Persönliches und nichts Gebautes ins Image
+.git
+.gitignore
+.venv
+.DS_Store
+data/
+config.toml
+*.egg-info/
+**/__pycache__/
+*.pyc
+frontend/node_modules/
+moviebot/web/
+docker-compose.yml

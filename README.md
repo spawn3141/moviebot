@@ -18,6 +18,67 @@ Streaming-Verfügbarkeitsdaten: JustWatch (über TMDB).
    (zeigt unten, ob die IDs aus der Config bekannt sind)
 3. Erster Lauf: `python3 -m moviebot snapshot`
 
+## Docker / Unraid
+
+Das Image wird von GitHub Actions gebaut (`.github/workflows/docker.yml`) und liegt danach als
+`ghcr.io/spawn3141/moviebot:latest` in der GitHub Container Registry. Unraid zieht es von dort –
+auf dem Server wird nichts gebaut, und Node braucht es dort auch nicht.
+
+Gebaut wird bei jedem Push auf `main`, aber nur wenn die Tests durchlaufen. Wer lokal bauen will:
+
+```
+docker compose up --build          # lokal ausprobieren → http://localhost:8080
+```
+
+**Ein einziges Volume** genügt: `/config`. Darin liegt alles, was bleiben soll:
+
+```
+/config/config.toml           ← Token und Dienste; wird beim ersten Start aus der Vorlage angelegt
+/config/data/moviebot.db      ← Datenbank, Sicherungen, Sperrdatei
+```
+
+Der Datenbankpfad aus `[database] path` wird relativ zur `config.toml` aufgelöst – darum landet
+die Datenbank von selbst neben ihr im Volume.
+
+**Umgebungsvariablen**
+
+| Variable | Standard | Zweck |
+|---|---|---|
+| `PUID` / `PGID` | `99` / `100` | Benutzer, dem die Dateien in `/config` gehören (Unraid: `nobody:users`) |
+| `TZ` | `Europe/Berlin` | Der tägliche Abgleich läuft nach lokaler Zeit – ohne das wäre 06:00 die UTC-Zeit |
+| `TMDB_READ_ACCESS_TOKEN` | – | Token, falls er nicht in der `config.toml` stehen soll (hat Vorrang) |
+| `MOVIEBOT_CONFIG` | `/config/config.toml` | Pfad zur Konfiguration |
+
+### Auf Unraid einrichten
+
+1. **Docker → Add Container**, oben auf **Advanced View** umschalten.
+2. **Name**: `moviebot`
+   **Repository**: `ghcr.io/spawn3141/moviebot:latest`
+3. **Add another Path**: Container `/config` → Host `/mnt/user/appdata/moviebot`, Access `Read/Write`
+4. **Add another Port**: Container `8080` → Host `8080` (oder eine freie Nummer)
+5. **Add another Variable** für `PUID` = `99`, `PGID` = `100`, `TZ` = `Europe/Berlin`
+6. **Apply**. Unraid lädt das Image und startet den Container. Beim ersten Start entsteht
+   `/mnt/user/appdata/moviebot/config.toml` – dort den TMDB-Token bei `read_access_token`
+   eintragen (oder als Variable `TMDB_READ_ACCESS_TOKEN` setzen) und den Container neu starten.
+7. Oberfläche öffnen: `http://<unraid-ip>:8080`. In den Einstellungen die Abos setzen und
+   **„Jetzt abgleichen"** drücken – der erste Lauf dauert eine Weile und ist nur Ausgangsstand,
+   Neuzugänge erscheinen ab dem nächsten Tag.
+
+Neue Version einspielen: im Docker-Reiter auf **Check for Updates** → **Apply Update**.
+Die Daten in `/config` bleiben dabei erhalten; Schemaänderungen werden beim Start automatisch
+angewendet (vorher legt moviebot eine Sicherung an).
+
+Ohne Token startet der Server trotzdem; die Oberfläche zeigt dann den Fehler beim Abgleich an.
+Danach läuft der Abgleich täglich um `[schedule] time` im Container selbst – der Container
+sollte also durchlaufen. Verpasste Läufe werden nach einem Neustart nachgeholt.
+
+Für die CLI im laufenden Container:
+
+```
+docker exec -it moviebot python -m moviebot status
+docker exec -it moviebot python -m moviebot providers --search wow
+```
+
 ## Befehle
 
 | Befehl | Zweck |

@@ -20,4 +20,6 @@ build-backend = "setuptools.build_meta"
 packages = ["moviebot"]
 
 [tool.setuptools.package-data]
-moviebot = ["schema.sql"]
+# web/ ist die gebaute Oberfläche (frontend: npm run build) – muss mitinstalliert
+# werden, sonst liefert ein installiertes Paket nur die API aus.
+moviebot = ["schema.sql", "web/**/*"]

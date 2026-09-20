@@ -1,0 +1,20 @@
+# Lokal zum Ausprobieren:            docker compose up --build
+# Auf Unraid (Compose-Manager-Plugin): MOVIEBOT_APPDATA auf den appdata-Ordner setzen.
+services:
+  moviebot:
+    build: .
+    image: moviebot:latest
+    container_name: moviebot
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      # Enthält config.toml und data/ (Datenbank, Sicherungen, Sperrdatei).
+      # Auf Unraid: /mnt/user/appdata/moviebot
+      - ${MOVIEBOT_APPDATA:-./appdata}:/config
+    environment:
+      PUID: "99"          # Unraid: nobody
+      PGID: "100"         # Unraid: users
+      TZ: "Europe/Berlin"
+      # Statt des Eintrags in der config.toml kann der Token auch hier stehen:
+      # TMDB_READ_ACCESS_TOKEN: "..."
