@@ -323,6 +323,11 @@ onMounted(async () => {
       </template>
       <template v-else>
         Nichts gefunden. <button type="button" class="link" @click="reset">Filter zurücksetzen</button>
+        <template v-if="f.q">
+          – oder den Titel
+          <RouterLink to="/einstellungen">von Hand hinzufügen</RouterLink>, falls er älter ist
+          als der beobachtete Zeitraum.
+        </template>
       </template>
     </div>
 

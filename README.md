@@ -37,6 +37,9 @@ Streaming-Verfügbarkeitsdaten: JustWatch (über TMDB).
   gesehen / Sterne / nicht interessiert direkt auf der Kachel (mit Rückgängig).
 - Neuzugänge und neue Staffeln über den Filter „Neu: N Tage“ (Kacheln zeigen „Neu bei WOW“
   bzw. „Staffel 3“); beim ersten Start liegt dafür der gespeicherte Filter „Neu“ bereit.
+- **Titel hinzufügen** (Einstellungen): Suche bei TMDB, um ältere Titel außerhalb von `min_year`
+  einzeln aufzunehmen – zum Bewerten oder um zu erfahren, wenn sie in einem Dienst auftauchen.
+  Ihre Verfügbarkeit wird aus den eigenen Angeboten des Titels abgeleitet und täglich aufgefrischt.
 - **Listen**: Sammlungen von Titeln (☆ auf der Kachel = Standardliste, Detailansicht/Picker für
   mehrere Listen); anlegen, umbenennen, löschen, Standard festlegen. Titel dürfen auf 0..n Listen
   stehen und bleiben auch dann in der Liste, wenn sie in keinem Dienst mehr laufen.
@@ -59,6 +62,7 @@ parallel `cd frontend && npm run dev` → http://localhost:5173 (lädt Änderung
 | `GET/PUT /api/settings` | kostenlose Angebote einbeziehen |
 | `GET/POST /api/lists`, `PATCH/DELETE /api/lists/{id}` | Listen verwalten |
 | `GET/POST /api/filters`, `PATCH/DELETE /api/filters/{id}` | gespeicherte Filter verwalten |
+| `GET /api/search`, `POST /api/titles/import`, `DELETE /api/titles/{id}/import` | Titel von Hand aufnehmen |
 | `PUT /api/titles/{id}/lists` | Listen eines Titels setzen |
 | `GET /api/genres`, `GET /api/status` | Genre-Liste, Datenstand |
 

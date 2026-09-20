@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS titles (
     poster_path        TEXT,
     imdb_id            TEXT,
     watch_link         TEXT,                   -- TMDB/JustWatch page listing where to watch
+    manual             INTEGER NOT NULL DEFAULT 0,  -- 1 = added by hand, outside the year scope
     details_fetched_at TEXT,                   -- NULL = only discover data so far
     offers_fetched_at  TEXT,                   -- NULL = `offers` not stored yet for this title
     age_rating         INTEGER,                -- minimum age 0/6/12/16/18, NULL = unknown

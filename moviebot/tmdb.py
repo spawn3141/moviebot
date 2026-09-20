@@ -142,6 +142,12 @@ class TMDBClient:
              "append_to_response": f"keywords,credits,watch/providers,external_ids,{ratings}"},
         )
 
+    def search(self, query: str, limit: int = 12) -> list[dict]:
+        """Search movies and series by name (for adding titles by hand)."""
+        data = self.get("/search/multi", {"query": query, "language": self.language,
+                                          "include_adult": "false", "page": 1})
+        return [r for r in data.get("results", []) if r.get("media_type") in ("movie", "tv")][:limit]
+
     def changed_ids(self, media_type: str, start: date, end: date, max_pages: int = 60) -> set[int]:
         """IDs TMDB changed in that period (all of TMDB, not just our catalog)."""
         params = {"start_date": start.isoformat(), "end_date": end.isoformat()}

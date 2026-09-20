@@ -5,7 +5,7 @@ import sqlite3
 from datetime import date
 
 from .age_ratings import age_rating
-from .config import Config
+from .config import FREE_MONETIZATION, Config
 from .db import get_setting, now_iso, set_setting
 
 CAST_LIMIT = 10
@@ -310,3 +310,22 @@ def bootstrap(conn: sqlite3.Connection, cfg: Config) -> None:
         sync_services(conn, cfg)
         ensure_default_list(conn)
         ensure_default_filter(conn)
+
+
+def offered_services(conn: sqlite3.Connection, title_id: int, monetization: list[str]) -> set[str]:
+    """Tracked services that offer this title, based on the stored `offers` of the title."""
+    services = conn.execute("SELECT key, provider_ids, free FROM services WHERE tracked = 1").fetchall()
+    offers = conn.execute("SELECT provider_id, monetization FROM offers WHERE title_id = ?",
+                          (title_id,)).fetchall()
+    result = set()
+    for s in services:
+        wanted = FREE_MONETIZATION if s["free"] else monetization
+        provider_ids = set(json.loads(s["provider_ids"]))
+        if any(o["provider_id"] in provider_ids and o["monetization"] in wanted for o in offers):
+            result.add(s["key"])
+    return result
+
+
+def mark_manual(conn: sqlite3.Connection, title_id: int, manual: bool = True) -> None:
+    conn.execute("UPDATE titles SET manual = ?, updated_at = ? WHERE id = ?",
+                 (int(manual), now_iso(), title_id))

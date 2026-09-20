@@ -6,8 +6,21 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 SCHEMA_FILE = Path(__file__).with_name("schema.sql")
+
+def _add_column(table: str, declaration: str):
+    """Migration step that adds a column unless it is already there – a database that jumps
+    several versions at once gets the new tables from schema.sql first."""
+    name = declaration.split()[0]
+
+    def step(conn: sqlite3.Connection) -> None:
+        columns = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if name not in columns:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {declaration}")
+
+    return step
+
 
 def _split_lists_and_filters(conn: sqlite3.Connection) -> None:
     """v7: dynamic lists became saved filters. Databases that jump here from an older version
@@ -28,20 +41,21 @@ def _split_lists_and_filters(conn: sqlite3.Connection) -> None:
 # existing tables need to be listed here.
 MIGRATIONS: dict[int, list] = {
     3: [
-        "ALTER TABLE titles ADD COLUMN watch_link TEXT",
-        "ALTER TABLE titles ADD COLUMN offers_fetched_at TEXT",
+        _add_column("titles", "watch_link TEXT"),
+        _add_column("titles", "offers_fetched_at TEXT"),
     ],
     4: [
-        "ALTER TABLE services ADD COLUMN free INTEGER NOT NULL DEFAULT 0",
+        _add_column("services", "free INTEGER NOT NULL DEFAULT 0"),
     ],
     5: [
-        "ALTER TABLE titles ADD COLUMN age_rating INTEGER",
-        "ALTER TABLE titles ADD COLUMN age_rating_source TEXT",
-        "ALTER TABLE titles ADD COLUMN age_rating_raw TEXT",
-        "ALTER TABLE titles ADD COLUMN ratings_fetched_at TEXT",
+        _add_column("titles", "age_rating INTEGER"),
+        _add_column("titles", "age_rating_source TEXT"),
+        _add_column("titles", "age_rating_raw TEXT"),
+        _add_column("titles", "ratings_fetched_at TEXT"),
     ],
     6: [],  # lists/list_items come from schema.sql
     7: [_split_lists_and_filters],  # lists hold titles, saved_filters hold searches
+    9: [_add_column("titles", "manual INTEGER NOT NULL DEFAULT 0")],
     8: [  # "no German data" was stored as contradicted; re-check those
         """UPDATE availability SET verified = NULL WHERE verified = 0 AND removed_at IS NULL
            AND NOT EXISTS (SELECT 1 FROM offers o WHERE o.title_id = availability.title_id)""",

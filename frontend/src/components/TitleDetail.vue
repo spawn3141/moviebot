@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { api } from '../api'
 import { MONETIZATION, TV_STATUS, ageLabel, durationLabel, formatDate } from '../format'
-import { currentLists, currentState, lists, loadLists, setTitleLists, ui, updateUserState } from '../store'
+import { currentLists, currentState, lists, loadLists, setTitleLists, showToast, ui, updateUserState } from '../store'
 import StarRating from './StarRating.vue'
 
 const props = defineProps({ id: { type: Number, required: true } })
@@ -46,6 +46,17 @@ const offerGroups = computed(() => {
     .map(([kind, names]) => ({ label: MONETIZATION[kind] ?? kind, names: [...names] }))
 })
 
+async function dropImport() {
+  if (!window.confirm(`„${title.value.title}“ nicht mehr verfolgen? Bewertungen bleiben erhalten.`)) return
+  try {
+    await api.dropImport(title.value.id)
+    showToast(`„${title.value.title}“ wird nicht mehr verfolgt`)
+    emit('close')
+  } catch (e) {
+    showToast(e.message)
+  }
+}
+
 function toggle(status) {
   updateUserState(title.value, { status: state.value.status === status ? 'unseen' : status })
 }
@@ -88,6 +99,7 @@ onBeforeUnmount(() => {
               <span v-if="durationLabel(title)">{{ durationLabel(title) }}</span>
               <span v-if="title.tv_status">{{ TV_STATUS[title.tv_status] ?? title.tv_status }}</span>
               <span v-if="ageLabel(title)" class="age">{{ ageLabel(title).long }}</span>
+              <span v-if="title.manual" class="age" title="Von Hand hinzugefügt, außerhalb des beobachteten Zeitraums">von Hand hinzugefügt</span>
             </p>
             <p class="dates">
               <template v-if="title.media_type === 'movie'">
@@ -127,6 +139,9 @@ onBeforeUnmount(() => {
                 </button>
                 <button type="button" :class="{ on: state.status === 'not_interested' }"
                         @click="toggle('not_interested')">✕ Nicht interessiert</button>
+                <button v-if="title.manual" type="button" @click="dropImport">
+                  Nicht mehr verfolgen
+                </button>
               </div>
             </div>
           </div>

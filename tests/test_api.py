@@ -20,6 +20,23 @@ TODAY = date.today()
 DAYS_AGO_2 = (TODAY - timedelta(days=2)).isoformat()
 
 
+class FakeTmdb:
+    """Stands in for TMDB when searching and importing by hand."""
+
+    MATRIX = {"id": 603, "media_type": "movie", "title": "Matrix", "release_date": "1999-03-30",
+              "overview": "Neo …", "poster_path": "/m.jpg", "genres": [{"name": "Action"}],
+              "credits": {"cast": [], "crew": []}, "keywords": {"keywords": []},
+              "watch/providers": {"results": {"DE": {"flatrate": [{"provider_id": 9}],
+                                                     "rent": [{"provider_id": 8}]}}}}
+
+    def search(self, query, limit=20):
+        return [self.MATRIX, {"id": 2, "media_type": "tv", "name": "Serie B",
+                              "first_air_date": "2019-01-01"}]
+
+    def details(self, media_type, tmdb_id):
+        return dict(self.MATRIX)
+
+
 class ApiTest(unittest.TestCase):
     def setUp(self):
         self.cfg = Config(services=SERVICES, initial_subscriptions=["prime", "wow"],
@@ -69,7 +86,7 @@ class ApiTest(unittest.TestCase):
             conn.execute("INSERT INTO events (title_id, event, season_number, event_date) "
                          "VALUES (?, 'new_season', 3, ?)", (self.ids["series"], TODAY.isoformat()))
         conn.close()
-        self.client = TestClient(create_app(self.cfg))
+        self.client = TestClient(create_app(self.cfg, client_factory=lambda cfg: FakeTmdb()))
 
     def titles(self, **params) -> list[str]:
         r = self.client.get("/api/titles", params=params)
@@ -346,6 +363,32 @@ class ApiTest(unittest.TestCase):
         queries.store_run_summary(conn, summary)
         self.assertEqual(queries.get_run_summary(conn)["added"], 2)
         self.assertEqual(self.client.get("/api/status").json()["schedule"], None)  # no scheduler here
+
+    def test_search_and_import_by_hand(self):
+        items = self.client.get("/api/search", params={"q": "Matrix"}).json()
+        self.assertEqual([(i["title"], i["year"], i["title_id"]) for i in items],
+                         [("Matrix", 1999, None), ("Serie B", 2019, self.ids["series"])])
+
+        created = self.client.post("/api/titles/import",
+                                   json={"media_type": "movie", "tmdb_id": 603})
+        self.assertEqual(created.status_code, 201)
+        title = created.json()
+        self.assertEqual((title["title"], title["manual"]), ("Matrix", True))
+        # availability comes from the title's own offers, not from a catalog
+        self.assertEqual([a["service"] for a in title["available_on"]], ["prime"])
+        # ... and the first import is silent: it is not a new arrival
+        self.assertEqual(self.client.get("/api/titles", params={"new_days": 7}).json()["total"], 1)
+        # the title is browsable like any other
+        self.assertIn("Matrix", self.titles(q="Matrix"))
+        # a second search shows that we have it now
+        again = self.client.get("/api/search", params={"q": "Matrix"}).json()[0]
+        self.assertEqual((again["title_id"], again["manual"]), (title["id"], True))
+
+        # dropping it keeps the title but stops tracking it
+        self.assertEqual(self.client.delete(f"/api/titles/{title['id']}/import").status_code, 204)
+        self.assertNotIn("Matrix", self.titles(q="Matrix"))
+        self.assertEqual(self.client.delete(f"/api/titles/{title['id']}/import").status_code, 400)
+        self.assertEqual(self.client.delete("/api/titles/99999/import").status_code, 404)
 
     def test_genres_and_status(self):
         names = [g["name"] for g in self.client.get("/api/genres").json()]

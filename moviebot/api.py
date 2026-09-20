@@ -14,7 +14,9 @@ from pydantic import BaseModel, Field
 from . import catalog, queries
 from .config import Config
 from .db import connect
+from .snapshot import import_title
 from .scheduler import SnapshotScheduler
+from .tmdb import TMDBClient, TMDBError
 
 # Built web UI (frontend/ → `npm run build`). Without it only the API is served.
 WEB_DIR = Path(__file__).with_name("web")
@@ -68,6 +70,7 @@ class TitleSummary(BaseModel):
     age_rating_raw: str | None = Field(description="Originalangabe, z. B. '12' oder 'PG-13'")
     available_on: list[Availability]
     in_lists: list[int] = Field(description="IDs der Listen, auf denen der Titel steht")
+    manual: bool = Field(description="von Hand hinzugefügt, außerhalb des Jahres-Zeitraums")
     recent: RecentEvent | None = Field(description="warum der Titel neu ist – nur mit new_days")
     user: UserState
 
@@ -92,6 +95,22 @@ class Offer(BaseModel):
     provider: str
     monetization: str = Field(description="flatrate (Abo), free, ads, rent, buy")
     service: str | None = Field(description="zugehöriger Dienst aus der Config, falls verfolgt")
+
+
+class SearchResult(BaseModel):
+    media_type: MediaType
+    tmdb_id: int
+    title: str
+    year: int | None
+    overview: str | None
+    poster_url: str | None
+    title_id: int | None = Field(description="schon in der Datenbank – dann die interne ID")
+    manual: bool = Field(description="wurde bereits von Hand hinzugefügt")
+
+
+class ImportRequest(BaseModel):
+    media_type: MediaType
+    tmdb_id: int
 
 
 class TitleDetail(TitleSummary):
@@ -228,6 +247,7 @@ class Schedule(BaseModel):
 
 
 class Status_(BaseModel):
+    min_year: int = Field(description="Titel ab diesem Jahr werden automatisch verfolgt")
     first_snapshot: str | None
     has_comparison: bool = Field(description="false = bisher nur der erste Abgleich, "
                                              "Neuzugänge gibt es erst ab dem zweiten")
@@ -248,7 +268,8 @@ class SnapshotStarted(BaseModel):
     started: bool
 
 
-def create_app(cfg: Config, scheduler: SnapshotScheduler | None = None) -> FastAPI:
+def create_app(cfg: Config, scheduler: SnapshotScheduler | None = None,
+               client_factory=TMDBClient.from_config) -> FastAPI:
     # Create/migrate the schema once at startup; requests then use plain connections.
     conn = connect(cfg.db_path)
     catalog.bootstrap(conn, cfg)
@@ -422,6 +443,33 @@ def create_app(cfg: Config, scheduler: SnapshotScheduler | None = None) -> FastA
         except LookupError:
             raise HTTPException(status_code=404, detail="Filter nicht gefunden")
 
+    @app.get("/api/search", response_model=list[SearchResult], tags=["Titel hinzufügen"],
+             summary="Bei TMDB nach Titeln suchen (auch außerhalb des Zeitraums)")
+    def search(conn: Conn, q: Annotated[str, Query(min_length=2)]):
+        try:
+            return queries.search_results(conn, client_factory(cfg).search(q))
+        except TMDBError as e:
+            raise HTTPException(status_code=502, detail=str(e))
+
+    @app.post("/api/titles/import", response_model=TitleDetail, status_code=201,
+              tags=["Titel hinzufügen"], summary="Titel von Hand hinzufügen")
+    def import_by_hand(conn: Conn, body: ImportRequest):
+        try:
+            title_id = import_title(conn, client_factory(cfg), cfg, body.media_type, body.tmdb_id)
+        except TMDBError as e:
+            raise HTTPException(status_code=502, detail=str(e))
+        return queries.get_title(conn, title_id)
+
+    @app.delete("/api/titles/{title_id}/import", status_code=204, tags=["Titel hinzufügen"],
+                summary="Von Hand hinzugefügten Titel nicht mehr verfolgen")
+    def drop_import(conn: Conn, title_id: int):
+        try:
+            queries.drop_manual_title(conn, title_id)
+        except LookupError:
+            raise HTTPException(status_code=404, detail="Titel nicht gefunden")
+        except ValueError as e:
+            raise bad_request(e)
+
     @app.get("/api/genres", response_model=list[Genre], tags=["Filter"])
     def genres(conn: Conn, media_type: MediaType | None = None):
         return queries.list_genres(conn, media_type)
@@ -457,7 +505,7 @@ def create_app(cfg: Config, scheduler: SnapshotScheduler | None = None) -> FastA
         schedule = scheduler.info() if scheduler else None
         if schedule and not schedule["last_result"]:
             schedule["last_result"] = queries.get_run_summary(conn)  # e.g. after a restart
-        return {**queries.status(conn), "schedule": schedule}
+        return {**queries.status(conn), "min_year": cfg.min_year, "schedule": schedule}
 
     @app.post("/api/snapshot", response_model=SnapshotStarted, status_code=202, tags=["System"],
               summary="Abgleich mit TMDB jetzt starten (läuft im Hintergrund)")

@@ -270,6 +270,7 @@ def _summary(row: sqlite3.Row, available: list[dict], in_lists: list[int] | None
         "age_rating_raw": row["age_rating_raw"],
         "available_on": available,
         "in_lists": in_lists or [],
+        "manual": bool(row["manual"]),
         "recent": recent,
         "user": {"status": row["status"] or "unseen", "rating": row["rating"]},
     }
@@ -687,3 +688,43 @@ def run_summary(conn: sqlite3.Connection, results: dict, since_event_id: int) ->
                    for (service, media_type), r in results.items() if r is None],
         "finished_at": now_iso(),
     }
+
+
+# --- adding titles by hand -----------------------------------------------------------
+
+def search_results(conn: sqlite3.Connection, results: list[dict]) -> list[dict]:
+    """TMDB search hits, marked with what we already know about them."""
+    known = {
+        (r["media_type"], r["tmdb_id"]): r
+        for r in conn.execute("SELECT media_type, tmdb_id, id, manual FROM titles")
+    }
+    out = []
+    for r in results:
+        media_type = r["media_type"]
+        released = (r.get("release_date") or r.get("first_air_date") or "")[:4]
+        entry = known.get((media_type, r["id"]))
+        out.append({
+            "media_type": media_type,
+            "tmdb_id": r["id"],
+            "title": r.get("title") or r.get("name") or "?",
+            "year": int(released) if released.isdigit() else None,
+            "overview": r.get("overview") or None,
+            "poster_url": f"{POSTER_BASE}{r['poster_path']}" if r.get("poster_path") else None,
+            "title_id": entry["id"] if entry else None,
+            "manual": bool(entry["manual"]) if entry else False,
+        })
+    return out
+
+
+def drop_manual_title(conn: sqlite3.Connection, title_id: int) -> None:
+    """Undo a manual import: the title keeps its data and ratings, but is no longer
+    kept up to date and no longer counts as available anywhere."""
+    row = conn.execute("SELECT manual FROM titles WHERE id = ?", (title_id,)).fetchone()
+    if row is None:
+        raise LookupError(title_id)
+    if not row["manual"]:
+        raise ValueError("Dieser Titel wurde nicht von Hand hinzugefügt")
+    with conn:
+        conn.execute("DELETE FROM availability WHERE title_id = ?", (title_id,))
+        conn.execute("DELETE FROM events WHERE title_id = ?", (title_id,))
+        catalog.mark_manual(conn, title_id, False)

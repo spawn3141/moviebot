@@ -2,10 +2,12 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { api } from '../api'
 import { showToast } from '../store'
+import TitleImport from '../components/TitleImport.vue'
 
 const services = ref([])
 const settings = ref({ include_free: false })
 const status = ref(null)
+const minYear = ref(null)
 const error = ref('')
 
 const paid = computed(() => services.value.filter((s) => !s.free))
@@ -16,6 +18,7 @@ async function load() {
     ;[services.value, settings.value, status.value] = await Promise.all([
       api.services(), api.settings(), api.status(),
     ])
+    minYear.value = status.value.min_year
   } catch (e) {
     error.value = e.message
   }
@@ -140,6 +143,16 @@ onMounted(async () => {
         </li>
       </ul>
       <p class="muted small">{{ free.map((s) => `${s.name} (${s.movies + s.series})`).join(' · ') }}</p>
+    </section>
+
+    <section>
+      <h2>Titel hinzufügen</h2>
+      <p class="muted">
+        Beobachtet werden normalerweise nur Titel ab {{ minYear || 'dem eingestellten Jahr' }}.
+        Hier kannst du ältere Titel einzeln dazunehmen – etwa um sie zu bewerten oder um zu
+        erfahren, wenn sie in einem deiner Dienste auftauchen.
+      </p>
+      <TitleImport />
     </section>
 
     <section>

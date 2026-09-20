@@ -206,6 +206,72 @@ def snapshot_service(conn: sqlite3.Connection, client: TMDBClient, cfg: Config, 
     return result
 
 
+def refresh_manual_availability(conn: sqlite3.Connection, cfg: Config, title_id: int, today: date,
+                                announce: bool) -> None:
+    """Availability of a hand-picked title comes from its own offers, not from the catalogs
+    (it usually lies outside the year scope). `announce` creates added/removed events; the
+    very first import stays silent, because the title is not new in the service."""
+    day = today.isoformat()
+    offered = catalog.offered_services(conn, title_id, cfg.monetization)
+    known = {r["service"]: r for r in conn.execute(
+        """SELECT service, removed_at, missed_runs, last_missed_date FROM availability
+           WHERE title_id = ?""", (title_id,))}
+
+    def event(service: str, kind: str) -> None:
+        if announce:
+            conn.execute("""INSERT INTO events (title_id, service, event, event_date)
+                            VALUES (?, ?, ?, ?)""", (title_id, service, kind, day))
+
+    for service in offered:
+        row = known.get(service)
+        if row is None:
+            conn.execute(
+                """INSERT INTO availability (title_id, service, first_seen, last_seen,
+                       in_baseline, verified) VALUES (?, ?, ?, ?, ?, 1)""",
+                (title_id, service, day, day, int(not announce)),
+            )
+            event(service, "added")
+        elif row["removed_at"] is not None:
+            conn.execute(
+                """UPDATE availability SET removed_at = NULL, last_seen = ?, missed_runs = 0,
+                          last_missed_date = NULL, verified = 1
+                   WHERE title_id = ? AND service = ?""", (day, title_id, service))
+            event(service, "readded")
+        else:
+            conn.execute(
+                """UPDATE availability SET last_seen = ?, missed_runs = 0, last_missed_date = NULL,
+                          verified = 1 WHERE title_id = ? AND service = ?""",
+                (day, title_id, service))
+
+    for service, row in known.items():
+        if service in offered or row["removed_at"] is not None or row["last_missed_date"] == day:
+            continue
+        missed = row["missed_runs"] + 1
+        removed_at = day if missed >= cfg.removal_grace_runs else None
+        conn.execute(
+            """UPDATE availability SET missed_runs = ?, last_missed_date = ?, removed_at = ?
+               WHERE title_id = ? AND service = ?""", (missed, day, removed_at, title_id, service))
+        if removed_at:
+            event(service, "removed")
+
+
+def import_title(conn: sqlite3.Connection, client: TMDBClient, cfg: Config, media_type: str,
+                 tmdb_id: int, today: date | None = None) -> int:
+    """Add a title by hand, independent of the year scope. Returns titles.id."""
+    today = today or date.today()
+    details = client.details(media_type, tmdb_id)
+    with conn:
+        title_id, _ = catalog.upsert_details(conn, media_type, details)
+        catalog.store_offers(conn, title_id, details, cfg.region)
+        catalog.store_age_rating(conn, title_id, media_type, details)
+        catalog.mark_manual(conn, title_id)
+        if media_type == "tv":
+            catalog.update_seasons(conn, title_id, details.get("seasons", []), today,
+                                   emit_events=False)
+        refresh_manual_availability(conn, cfg, title_id, today, announce=False)
+    return title_id
+
+
 def update_details(conn: sqlite3.Connection, client: TMDBClient, cfg: Config, today: date,
                    limit: int | None = None, backfill: int = 0,
                    changed_tv_ids: set[int] | None = None,
@@ -227,10 +293,12 @@ def update_details(conn: sqlite3.Connection, client: TMDBClient, cfg: Config, to
     stale_before = (today - timedelta(days=cfg.series_refresh_days)).isoformat()
     todo = conn.execute(
         f"""
-        SELECT t.id, t.media_type, t.tmdb_id FROM titles t
+        SELECT t.id, t.media_type, t.tmdb_id, t.manual FROM titles t
         WHERE t.details_fetched_at IS NULL
            OR (EXISTS (SELECT 1 FROM availability a
                        WHERE a.title_id = t.id AND a.removed_at IS NULL AND a.verified IS NULL)
+               AND (t.details_fetched_at IS NULL OR substr(t.details_fetched_at, 1, 10) < ?))
+           OR (t.manual = 1
                AND (t.details_fetched_at IS NULL OR substr(t.details_fetched_at, 1, 10) < ?))
            OR (t.media_type = 'tv'
                AND COALESCE(t.tv_status, '') NOT IN ({",".join("?" * len(FINISHED_TV_STATUSES))})
@@ -241,7 +309,8 @@ def update_details(conn: sqlite3.Connection, client: TMDBClient, cfg: Config, to
                            WHERE a.title_id = t.id AND a.removed_at IS NULL))
         ORDER BY t.popularity DESC
         """,
-        (today.isoformat(), *FINISHED_TV_STATUSES, today.isoformat(), *changed, stale_before),
+        (today.isoformat(), today.isoformat(), *FINISHED_TV_STATUSES, today.isoformat(),
+         *changed, stale_before),
     ).fetchall()
     if backfill:
         planned = {r["id"] for r in todo}
@@ -294,6 +363,8 @@ def update_details(conn: sqlite3.Connection, client: TMDBClient, cfg: Config, to
             if row["media_type"] == "tv":
                 catalog.update_seasons(conn, title_id, details.get("seasons", []), today,
                                        emit_events=had_details)
+            if conn.execute("SELECT manual FROM titles WHERE id = ?", (title_id,)).fetchone()[0]:
+                refresh_manual_availability(conn, cfg, title_id, today, announce=True)
         if progress and (i % 10 == 0 or i == len(todo)):
             progress({"phase": "details", "done": i, "total": len(todo), "label": "Titeldaten"})
         if i % 250 == 0:

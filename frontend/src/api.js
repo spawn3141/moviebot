@@ -42,6 +42,10 @@ export const api = {
   updateSettings: (body) => request('PUT', '/api/settings', { body }),
   status: () => request('GET', '/api/status'),
   startSnapshot: () => request('POST', '/api/snapshot'),
+  search: (q) => request('GET', '/api/search', { params: { q } }),
+  importTitle: (media_type, tmdb_id) =>
+    request('POST', '/api/titles/import', { body: { media_type, tmdb_id } }),
+  dropImport: (id) => request('DELETE', `/api/titles/${id}/import`),
   lists: () => request('GET', '/api/lists'),
   createList: (name) => request('POST', '/api/lists', { body: { name } }),
   savedFilters: () => request('GET', '/api/filters'),
