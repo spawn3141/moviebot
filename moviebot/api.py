@@ -113,21 +113,36 @@ class StateUpdate(BaseModel):
 class TitleList(BaseModel):
     id: int
     name: str
-    kind: Literal["manual", "dynamic"]
     is_default: bool
-    filters: dict | None = Field(description="nur bei dynamischen Listen (noch nicht nutzbar)")
-    count: int
+    count: int = Field(description="Anzahl der Titel auf der Liste")
 
 
 class ListCreate(BaseModel):
     name: str
-    kind: Literal["manual", "dynamic"] = "manual"
-    filters: dict | None = None
 
 
 class ListUpdate(BaseModel):
     name: str | None = None
     is_default: bool | None = None
+
+
+class SavedFilter(BaseModel):
+    id: int
+    name: str
+    filters: dict = Field(description="Filter wie in GET /api/titles, z. B. "
+                                      "{'genre': ['Animation'], 'max_age': 6}")
+    count: int = Field(description="Wie viele Titel gerade passen")
+    error: str | None = Field(description="Problem mit dem Filter, z. B. ein Dienst, "
+                                          "den es nicht mehr gibt")
+
+
+class SavedFilterCreate(BaseModel):
+    name: str
+    filters: dict
+
+
+class SavedFilterUpdate(BaseModel):
+    name: str | None = None
     filters: dict | None = None
 
 
@@ -255,7 +270,8 @@ def create_app(cfg: Config, scheduler: SnapshotScheduler | None = None) -> FastA
     def list_titles(
         conn: Conn,
         services: Annotated[list[str] | None, Query(
-            description="Dienste (z. B. netflix). Leer = meine Abos (+ kostenlose, falls eingestellt)")] = None,
+            description="Dienste (z. B. netflix), 'all' = alle verfolgten. "
+                        "Leer = meine Abos (+ kostenlose, falls eingestellt)")] = None,
         include_free: Annotated[bool | None, Query(
             description="Nur ohne 'services': kostenlose einbeziehen (leer = Einstellung)")] = None,
         media_type: MediaType | None = None,
@@ -265,6 +281,9 @@ def create_app(cfg: Config, scheduler: SnapshotScheduler | None = None) -> FastA
         q: Annotated[str | None, Query(description="Suche im Titel")] = None,
         min_rating: Annotated[float | None, Query(ge=0, le=10)] = None,
         list_id: Annotated[int | None, Query(description="Nur Titel auf dieser Liste")] = None,
+        filter_id: Annotated[int | None, Query(
+            description="Gespeicherten Filter anwenden. Er gewinnt gegenüber gleichnamigen "
+                        "Parametern; andere Parameter schränken zusätzlich ein")] = None,
         only_available: Annotated[bool | None, Query(
             description="Nur aktuell verfügbare Titel (Standard: ja, in Listen nein)")] = None,
         max_age: Annotated[int | None, Query(
@@ -283,12 +302,14 @@ def create_app(cfg: Config, scheduler: SnapshotScheduler | None = None) -> FastA
             services=services, include_free=include_free, media_type=media_type,
             genres=genre or [], year_from=year_from, year_to=year_to, q=q,
             min_rating=min_rating, max_age=max_age, include_unrated=include_unrated,
-            list_id=list_id, only_available=only_available,
+            list_id=list_id, filter_id=filter_id, only_available=only_available,
             new_days=new_days, show_seen=show_seen,
             show_not_interested=show_not_interested, sort=sort, page=page, page_size=page_size,
         )
         try:
             return queries.search_titles(conn, f)
+        except LookupError:
+            raise HTTPException(status_code=404, detail="Liste oder Filter nicht gefunden")
         except ValueError as e:
             raise bad_request(e)
 
@@ -328,7 +349,7 @@ def create_app(cfg: Config, scheduler: SnapshotScheduler | None = None) -> FastA
     @app.post("/api/lists", response_model=TitleList, status_code=201, tags=["Listen"])
     def create_list(conn: Conn, body: ListCreate):
         try:
-            return queries.create_list(conn, body.name, body.kind, body.filters)
+            return queries.create_list(conn, body.name)
         except ValueError as e:
             raise bad_request(e)
 
@@ -336,7 +357,7 @@ def create_app(cfg: Config, scheduler: SnapshotScheduler | None = None) -> FastA
                summary="Liste umbenennen oder als Standard festlegen")
     def update_list(conn: Conn, list_id: int, body: ListUpdate):
         try:
-            return queries.update_list(conn, list_id, body.name, body.is_default, body.filters)
+            return queries.update_list(conn, list_id, body.name, body.is_default)
         except LookupError:
             raise HTTPException(status_code=404, detail="Liste nicht gefunden")
         except ValueError as e:
@@ -350,6 +371,35 @@ def create_app(cfg: Config, scheduler: SnapshotScheduler | None = None) -> FastA
             raise HTTPException(status_code=404, detail="Liste nicht gefunden")
         except ValueError as e:
             raise bad_request(e)
+
+    @app.get("/api/filters", response_model=list[SavedFilter], tags=["Gespeicherte Filter"])
+    def saved_filters(conn: Conn):
+        return queries.list_saved_filters(conn)
+
+    @app.post("/api/filters", response_model=SavedFilter, status_code=201,
+              tags=["Gespeicherte Filter"])
+    def create_saved_filter(conn: Conn, body: SavedFilterCreate):
+        try:
+            return queries.create_saved_filter(conn, body.name, body.filters)
+        except ValueError as e:
+            raise bad_request(e)
+
+    @app.patch("/api/filters/{filter_id}", response_model=SavedFilter,
+               tags=["Gespeicherte Filter"], summary="Filter umbenennen oder überschreiben")
+    def update_saved_filter(conn: Conn, filter_id: int, body: SavedFilterUpdate):
+        try:
+            return queries.update_saved_filter(conn, filter_id, body.name, body.filters)
+        except LookupError:
+            raise HTTPException(status_code=404, detail="Filter nicht gefunden")
+        except ValueError as e:
+            raise bad_request(e)
+
+    @app.delete("/api/filters/{filter_id}", status_code=204, tags=["Gespeicherte Filter"])
+    def delete_saved_filter(conn: Conn, filter_id: int):
+        try:
+            queries.delete_saved_filter(conn, filter_id)
+        except LookupError:
+            raise HTTPException(status_code=404, detail="Filter nicht gefunden")
 
     @app.get("/api/new", response_model=list[Event], tags=["Titel"],
              summary="Neu in meinen Diensten (Neuzugänge und neue Staffeln)")

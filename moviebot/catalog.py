@@ -283,7 +283,7 @@ def ensure_default_list(conn: sqlite3.Connection) -> None:
         return
     now = now_iso()
     conn.execute(
-        "INSERT INTO lists (name, kind, is_default, created_at, updated_at) VALUES (?, 'manual', 1, ?, ?)",
+        "INSERT INTO lists (name, is_default, created_at, updated_at) VALUES (?, 1, ?, ?)",
         (DEFAULT_LIST_NAME, now, now),
     )
 

@@ -45,8 +45,9 @@ onMounted(async () => {
         <dt>Meine Dienste</dt>
         <dd>
           Voreingestellt siehst du nur, was in deinen Abos läuft (Einstellungen → Meine Abos),
-          plus die kostenlosen Angebote, falls du sie einbezogen hast. Über die Dienste-Auswahl
-          kannst du auch in Diensten stöbern, die du gerade nicht hast – etwa vor einem Probemonat.
+          plus die kostenlosen Angebote, falls du sie einbezogen hast. „Alle“ zeigt alles, was
+          beobachtet wird, auch Dienste ohne Abo – praktisch vor einem Probemonat. Oder du wählst
+          einzelne Dienste aus.
         </dd>
         <dt>Neu: 7 / 14 / 30 Tage</dt>
         <dd>
@@ -99,6 +100,30 @@ onMounted(async () => {
       </p>
       <p class="muted">
         Deine Bewertungen sind die Grundlage für die geplante Sortierung „Passt zu mir“.
+      </p>
+    </section>
+
+    <section>
+      <h2>Gespeicherte Filter</h2>
+      <p>
+        Ein gespeicherter Filter ist eine gespeicherte Suche, z. B. „Animation, bis 6 Jahre“.
+        Stelle den Filter auf „Entdecken“ ein und wähle im Menü rechts neben „Filter“ den Eintrag
+        <strong>Aktuellen Filter speichern …</strong>.
+      </p>
+      <p>
+        Dasselbe Menü listet alle gespeicherten Filter mit ihrer aktuellen Trefferzahl. Ein Klick
+        wendet einen an; der Knopf trägt dann dessen Namen. Änderst du danach etwas, zeigt der Knopf
+        einen Punkt, und im Menü stehen <strong>überschreiben</strong> sowie
+        <strong>Aktuellen Filter speichern …</strong> für eine neue Kopie. Dort kannst du auch
+        umbenennen, löschen oder die Auswahl aufheben.
+      </p>
+      <p>
+        Ein gespeicherter Filter hat keinen eigenen Inhalt: Er zeigt immer, was gerade passt –
+        inklusive Neuzugängen.
+      </p>
+      <p class="muted">
+        Kurz: Ein <strong>Filter</strong> ist eine Suche, eine <strong>Liste</strong> eine Sammlung
+        von Titeln.
       </p>
     </section>
 

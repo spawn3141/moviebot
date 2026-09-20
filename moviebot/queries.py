@@ -2,7 +2,7 @@
 
 import json
 import sqlite3
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 
 from . import catalog, genres
@@ -59,6 +59,7 @@ class TitleFilter:
     max_age: int | None = None             # age rating <= this
     include_unrated: bool = False          # with max_age: also titles without any age rating
     list_id: int | None = None             # only titles on this list
+    filter_id: int | None = None           # apply this saved filter
     only_available: bool | None = None     # None = True, except when a list is shown
     new_days: int | None = None            # only titles new in the selected services / new season
     show_seen: bool = False
@@ -125,8 +126,13 @@ def set_service_subscribed(conn: sqlite3.Connection, key: str, subscribed: bool)
     return next(s for s in list_services(conn) if s["key"] == key)
 
 
+ALL_SERVICES = "all"  # sentinel in `services`: every tracked service, also future ones
+
+
 def selected_services(conn: sqlite3.Connection, services: list[str] | None,
                       include_free: bool | None) -> list[str]:
+    if services and ALL_SERVICES in services:
+        return [r[0] for r in conn.execute("SELECT key FROM services WHERE tracked = 1")]
     if services:
         known = {r[0] for r in conn.execute("SELECT key FROM services WHERE tracked = 1")}
         unknown = [s for s in services if s not in known]
@@ -141,6 +147,58 @@ def selected_services(conn: sqlite3.Connection, services: list[str] | None,
             (int(include_free),),
         )
     ]
+
+
+# --- saved filters: what may be stored -----------------------------------------------
+
+# Names as in the HTTP API. Everything else about a view – sorting, paging, "gesehene zeigen" –
+# belongs to the request, not to the saved filter.
+SAVED_FILTERS = {
+    "services": "services", "include_free": "include_free", "media_type": "media_type",
+    "genre": "genres", "year_from": "year_from", "year_to": "year_to", "q": "q",
+    "min_rating": "min_rating", "max_age": "max_age", "include_unrated": "include_unrated",
+    "new_days": "new_days",
+}
+# stored for the UI (e.g. its preferred sorting), ignored when filtering
+TOLERATED_FILTER_KEYS = {"sort", "show_seen", "show_not_interested", "only_available"}
+
+# The web UI sends numbers as strings ("2020"); SQLite would compare those as text.
+FILTER_TYPES = {"year_from": int, "year_to": int, "max_age": int, "new_days": int,
+                "min_rating": float, "include_free": bool, "include_unrated": bool}
+
+
+def clean_filters(filters: dict) -> dict:
+    unknown = set(filters) - set(SAVED_FILTERS) - TOLERATED_FILTER_KEYS
+    if unknown:
+        raise ValueError(f"Unbekannte Filter: {', '.join(sorted(unknown))}")
+    empty = (None, "", [], {})
+    cleaned = {}
+    for key, value in filters.items():
+        if value in empty:
+            continue
+        convert = FILTER_TYPES.get(key)
+        if convert is bool:
+            value = value not in (False, "false", "0", 0)
+        elif convert:
+            try:
+                value = convert(value)
+            except (TypeError, ValueError):
+                raise ValueError(f"'{key}' muss eine Zahl sein, nicht {value!r}") from None
+        elif key in ("genre", "services"):
+            if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+                raise ValueError(f"'{key}' muss eine Liste von Texten sein")
+        elif key == "media_type" and value not in ("movie", "tv"):
+            raise ValueError("'media_type' muss 'movie' oder 'tv' sein")
+        cleaned[key] = value
+    if not set(cleaned) & set(SAVED_FILTERS):
+        raise ValueError("Ein gespeicherter Filter braucht mindestens eine Einschränkung")
+    return cleaned
+
+
+def _apply_saved(f: "TitleFilter", stored: dict) -> "TitleFilter":
+    """A saved filter wins over the request; filters it does not define still narrow further."""
+    changes = {SAVED_FILTERS[k]: v for k, v in stored.items() if k in SAVED_FILTERS}
+    return replace(f, filter_id=None, **changes)
 
 
 # --- titles ------------------------------------------------------------------------
@@ -210,6 +268,10 @@ def _availability_for(conn: sqlite3.Connection, title_ids: list[int],
 
 def search_titles(conn: sqlite3.Connection, f: TitleFilter, today: date | None = None) -> dict:
     today = today or date.today()
+    if f.list_id is not None:
+        _one_list(conn, f.list_id)  # 404 instead of an empty page for an unknown list
+    if f.filter_id is not None:
+        f = _apply_saved(f, _one_filter(conn, f.filter_id)["filters"])
     services = selected_services(conn, f.services, f.include_free)
     if f.sort not in SORTS:
         raise ValueError(f"Unbekannte Sortierung '{f.sort}'. Möglich: {', '.join(SORTS)}")
@@ -460,9 +522,18 @@ def status(conn: sqlite3.Connection) -> dict:
     }
 
 
-# --- lists -------------------------------------------------------------------------
+# --- lists (collections of titles) and saved filters (stored searches) ---------------
 
-MAX_LIST_NAME = 60
+MAX_NAME = 60
+
+
+def _clean_name(name: str) -> str:
+    name = name.strip()
+    if not name:
+        raise ValueError("Der Name darf nicht leer sein")
+    if len(name) > MAX_NAME:
+        raise ValueError(f"Der Name darf höchstens {MAX_NAME} Zeichen haben")
+    return name
 
 
 def list_lists(conn: sqlite3.Connection) -> list[dict]:
@@ -470,11 +541,8 @@ def list_lists(conn: sqlite3.Connection) -> list[dict]:
         """SELECT l.*, (SELECT COUNT(*) FROM list_items i WHERE i.list_id = l.id) AS count
            FROM lists l ORDER BY l.is_default DESC, l.position, l.name COLLATE NOCASE"""
     ).fetchall()
-    return [
-        {"id": r["id"], "name": r["name"], "kind": r["kind"], "is_default": bool(r["is_default"]),
-         "filters": json.loads(r["filters"]) if r["filters"] else None, "count": r["count"]}
-        for r in rows
-    ]
+    return [{"id": r["id"], "name": r["name"], "is_default": bool(r["is_default"]),
+             "count": r["count"]} for r in rows]
 
 
 def _one_list(conn: sqlite3.Connection, list_id: int) -> dict:
@@ -484,40 +552,23 @@ def _one_list(conn: sqlite3.Connection, list_id: int) -> dict:
     return found[0]
 
 
-def _clean_name(name: str) -> str:
-    name = name.strip()
-    if not name:
-        raise ValueError("Der Name darf nicht leer sein")
-    if len(name) > MAX_LIST_NAME:
-        raise ValueError(f"Der Name darf höchstens {MAX_LIST_NAME} Zeichen haben")
-    return name
-
-
-def create_list(conn: sqlite3.Connection, name: str, kind: str = "manual",
-                filters: dict | None = None) -> dict:
-    if kind not in ("manual", "dynamic"):
-        raise ValueError("kind muss 'manual' oder 'dynamic' sein")
+def create_list(conn: sqlite3.Connection, name: str) -> dict:
     now = now_iso()
     with conn:
         list_id = conn.execute(
-            """INSERT INTO lists (name, kind, filters, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?) RETURNING id""",
-            (_clean_name(name), kind, json.dumps(filters, ensure_ascii=False) if filters else None,
-             now, now),
+            "INSERT INTO lists (name, created_at, updated_at) VALUES (?, ?, ?) RETURNING id",
+            (_clean_name(name), now, now),
         ).fetchone()[0]
     return _one_list(conn, list_id)
 
 
 def update_list(conn: sqlite3.Connection, list_id: int, name: str | None = None,
-                is_default: bool | None = None, filters: dict | None = None) -> dict:
+                is_default: bool | None = None) -> dict:
     entry = _one_list(conn, list_id)
     with conn:
         if name is not None:
             conn.execute("UPDATE lists SET name = ?, updated_at = ? WHERE id = ?",
                          (_clean_name(name), now_iso(), list_id))
-        if filters is not None:
-            conn.execute("UPDATE lists SET filters = ?, updated_at = ? WHERE id = ?",
-                         (json.dumps(filters, ensure_ascii=False), now_iso(), list_id))
         if is_default:
             conn.execute("UPDATE lists SET is_default = 0 WHERE is_default = 1")
             conn.execute("UPDATE lists SET is_default = 1, updated_at = ? WHERE id = ?",
@@ -528,8 +579,7 @@ def update_list(conn: sqlite3.Connection, list_id: int, name: str | None = None,
 
 
 def delete_list(conn: sqlite3.Connection, list_id: int) -> None:
-    entry = _one_list(conn, list_id)
-    if entry["is_default"]:
+    if _one_list(conn, list_id)["is_default"]:
         raise ValueError("Die Standardliste kann nicht gelöscht werden – "
                          "lege zuerst eine andere Liste als Standard fest")
     with conn:
@@ -541,7 +591,7 @@ def set_title_lists(conn: sqlite3.Connection, title_id: int, list_ids: list[int]
     """Replace the list membership of one title. Returns the list ids it is on now."""
     if conn.execute("SELECT 1 FROM titles WHERE id = ?", (title_id,)).fetchone() is None:
         raise LookupError(title_id)
-    known = {r[0] for r in conn.execute("SELECT id FROM lists WHERE kind = 'manual'")}
+    known = {r[0] for r in conn.execute("SELECT id FROM lists")}
     unknown = [i for i in list_ids if i not in known]
     if unknown:
         raise ValueError(f"Unbekannte Listen: {', '.join(map(str, unknown))}")
@@ -553,3 +603,56 @@ def set_title_lists(conn: sqlite3.Connection, title_id: int, list_ids: list[int]
             [(list_id, title_id, now) for list_id in dict.fromkeys(list_ids)],
         )
     return _lists_for(conn, [title_id]).get(title_id, [])
+
+
+def list_saved_filters(conn: sqlite3.Connection) -> list[dict]:
+    rows = conn.execute(
+        "SELECT * FROM saved_filters ORDER BY position, name COLLATE NOCASE").fetchall()
+    result = []
+    for r in rows:
+        entry = {"id": r["id"], "name": r["name"], "filters": json.loads(r["filters"]),
+                 "count": 0, "error": None}
+        try:
+            f = _apply_saved(TitleFilter(page_size=1), entry["filters"])
+            entry["count"] = search_titles(conn, f)["total"]
+        except ValueError as e:  # e.g. a service in the filter no longer exists
+            entry["error"] = str(e)
+        result.append(entry)
+    return result
+
+
+def _one_filter(conn: sqlite3.Connection, filter_id: int) -> dict:
+    found = [entry for entry in list_saved_filters(conn) if entry["id"] == filter_id]
+    if not found:
+        raise LookupError(filter_id)
+    return found[0]
+
+
+def create_saved_filter(conn: sqlite3.Connection, name: str, filters: dict) -> dict:
+    now = now_iso()
+    with conn:
+        filter_id = conn.execute(
+            """INSERT INTO saved_filters (name, filters, created_at, updated_at)
+               VALUES (?, ?, ?, ?) RETURNING id""",
+            (_clean_name(name), json.dumps(clean_filters(filters), ensure_ascii=False), now, now),
+        ).fetchone()[0]
+    return _one_filter(conn, filter_id)
+
+
+def update_saved_filter(conn: sqlite3.Connection, filter_id: int, name: str | None = None,
+                        filters: dict | None = None) -> dict:
+    _one_filter(conn, filter_id)
+    with conn:
+        if name is not None:
+            conn.execute("UPDATE saved_filters SET name = ?, updated_at = ? WHERE id = ?",
+                         (_clean_name(name), now_iso(), filter_id))
+        if filters is not None:
+            conn.execute("UPDATE saved_filters SET filters = ?, updated_at = ? WHERE id = ?",
+                         (json.dumps(clean_filters(filters), ensure_ascii=False), now_iso(), filter_id))
+    return _one_filter(conn, filter_id)
+
+
+def delete_saved_filter(conn: sqlite3.Connection, filter_id: int) -> None:
+    _one_filter(conn, filter_id)
+    with conn:
+        conn.execute("DELETE FROM saved_filters WHERE id = ?", (filter_id,))

@@ -36,9 +36,11 @@ Streaming-Verfügbarkeitsdaten: JustWatch (über TMDB).
 - **Entdecken**: filtern nach Film/Serie, Genre, Jahr, Dienst, Suche, „neu in N Tagen“; sortieren;
   gesehen / Sterne / nicht interessiert direkt auf der Kachel (mit Rückgängig).
 - **Neu**: Neuzugänge und neue Staffeln in deinen Diensten, nach Tagen gruppiert.
-- **Listen**: manuelle Merklisten (☆ auf der Kachel = Standardliste, Detailansicht/Picker für
+- **Listen**: Sammlungen von Titeln (☆ auf der Kachel = Standardliste, Detailansicht/Picker für
   mehrere Listen); anlegen, umbenennen, löschen, Standard festlegen. Titel dürfen auf 0..n Listen
   stehen und bleiben auch dann in der Liste, wenn sie in keinem Dienst mehr laufen.
+- **Gespeicherte Filter**: gespeicherte Suchen, als Knöpfe über der Filterleiste auf „Entdecken“.
+  Ein Klick setzt den Filter; danach Speichern / Verwerfen / Als neuen Filter speichern.
 - **Einstellungen**: Abos an/aus, kostenlose Angebote, Datenstand.
 
 Code in `frontend/` (Vue + Vite). Beim Entwickeln: `.venv/bin/python -m moviebot serve` und
@@ -56,6 +58,7 @@ parallel `cd frontend && npm run dev` → http://localhost:5173 (lädt Änderung
 | `GET/PUT /api/services` | Dienste, Abos an/aus |
 | `GET/PUT /api/settings` | kostenlose Angebote einbeziehen |
 | `GET/POST /api/lists`, `PATCH/DELETE /api/lists/{id}` | Listen verwalten |
+| `GET/POST /api/filters`, `PATCH/DELETE /api/filters/{id}` | gespeicherte Filter verwalten |
 | `PUT /api/titles/{id}/lists` | Listen eines Titels setzen |
 | `GET /api/genres`, `GET /api/status` | Genre-Liste, Datenstand |
 
@@ -89,7 +92,8 @@ der Stimmen, damit 9,5 bei 3 Stimmen nicht vor 7,8 bei 5000 Stimmen landet.
 - **Altersfreigabe**: deutsche FSK, sonst die US-Freigabe umgerechnet (G→0, PG→6, PG-13→12, R→16,
   NC-17→18; Serien TV-Y/TV-G→0, TV-Y7/TV-PG→6, TV-14→12, TV-MA→16), in der Oberfläche mit * markiert.
   Kommt mit derselben Detailabfrage; ältere Titel per `--backfill`. Filter `max_age` (+ `include_unrated`).
-- **Listen**: `lists` + `list_items`. Das Schema kennt schon `kind` ('manual'/'dynamic') und
-  `filters`; dynamische Listen (gespeicherter Filter) sind damit ohne Migration nachrüstbar.
+- **Listen und Filter sind getrennt**: `lists` + `list_items` enthalten Titel, `saved_filters`
+  nur gespeicherte Suchen (`filter_id` in `GET /api/titles` wendet einen an). Ein gespeicherter
+  Filter gewinnt gegenüber gleichnamigen Parametern; andere Parameter schränken zusätzlich ein.
 - **Migrationen**: Schemaänderungen werden beim Start automatisch angewendet; vorher wird eine
   Sicherung `moviebot.db.bak-v<alte Version>` angelegt.

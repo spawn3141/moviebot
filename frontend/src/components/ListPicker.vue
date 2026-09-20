@@ -9,7 +9,7 @@ const emit = defineEmits(['close'])
 const newName = ref('')
 const busy = ref(false)
 const selected = computed(() => currentLists(props.item))
-const manualLists = computed(() => lists.items.filter((l) => l.kind === 'manual'))
+const manualLists = computed(() => lists.items)
 
 async function toggle(listId) {
   const ids = selected.value.includes(listId)

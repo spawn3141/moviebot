@@ -2,7 +2,8 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api'
-import { currentState } from '../store'
+import { currentState, loadSavedFilters, savedFilters, showToast } from '../store'
+import SavedFilterMenu from '../components/SavedFilterMenu.vue'
 import TitleCard from '../components/TitleCard.vue'
 
 const PAGE_SIZE = 48
@@ -45,6 +46,7 @@ const genres = ref([])
 const services = ref([])
 const showFilters = ref(false)
 const status = ref(null)
+const activeFilterId = ref(null)   // saved filter currently applied
 
 const paidServices = computed(() => services.value.filter((s) => !s.free))
 const freeServices = computed(() => services.value.filter((s) => s.free))
@@ -110,6 +112,49 @@ watch(search, (value) => {
   searchTimer = setTimeout(() => (f.q = value.trim()), 300)
 })
 
+const activeFilter = computed(() =>
+  savedFilters.items.find((x) => x.id === activeFilterId.value) ?? null)
+
+/** Has the user changed anything since applying the saved filter? */
+const filterChanged = computed(() => {
+  if (!activeFilter.value) return false
+  return JSON.stringify(normalize(currentFilters())) !== JSON.stringify(normalize(activeFilter.value.filters))
+})
+
+function normalize(filters) {
+  return Object.fromEntries(Object.entries(filters)
+    .filter(([k, v]) => k !== 'sort' && v !== '' && v !== false && !(Array.isArray(v) && !v.length))
+    .map(([k, v]) => [k, Array.isArray(v) ? [...v].sort() : String(v)])
+    .sort(([a], [b]) => a.localeCompare(b)))
+}
+
+function applyFilter(entry) {
+  activeFilterId.value = entry.id
+  // deep copy: otherwise editing the filter here would also change the stored one in memory
+  const stored = JSON.parse(JSON.stringify(entry.filters))
+  Object.assign(f, { ...DEFAULTS, genre: [], services: [], ...stored })
+  search.value = f.q
+}
+
+/** Everything that defines *which* titles are shown (not how they are sorted/paged). */
+function currentFilters() {
+  const keys = ['media_type', 'genre', 'services', 'year_from', 'year_to', 'q', 'max_age',
+                'include_unrated', 'new_days']
+  const filters = Object.fromEntries(
+    keys.map((k) => [k, f[k]]).filter(([, v]) => (Array.isArray(v) ? v.length : v !== '' && v !== false)))
+  return { ...filters, sort: f.sort }
+}
+
+const canSave = computed(() => Object.keys(currentFilters()).some((k) => k !== 'sort'))
+
+
+
+function toggleService(key) {
+  // picking a single service replaces "Alle"
+  if (f.services.includes('all')) f.services = [key]
+  else toggleIn(f.services, key)
+}
+
 function toggleIn(list, value) {
   const i = list.indexOf(value)
   if (i === -1) list.push(value)
@@ -121,6 +166,7 @@ onBeforeUnmount(() => clearTimeout(saveTimer))
 function reset() {
   Object.assign(f, { ...DEFAULTS, genre: [], services: [] })
   search.value = ''
+  activeFilterId.value = null
 }
 
 onMounted(async () => {
@@ -138,6 +184,7 @@ onMounted(async () => {
   loadGenres()
   services.value = await api.services()
   status.value = await api.status()
+  await loadSavedFilters(true)
 })
 </script>
 
@@ -159,6 +206,10 @@ onMounted(async () => {
       <button type="button" class="filter-toggle" :class="{ on: showFilters }" @click="showFilters = !showFilters">
         Filter<span v-if="activeFilterCount" class="count">{{ activeFilterCount }}</span>
       </button>
+      <SavedFilterMenu :filters="currentFilters()" :active-id="activeFilterId" :changed="filterChanged"
+                       :service-names="serviceNames" :can-save="canSave"
+                       @apply="applyFilter" @clear="reset"
+                       @saved="(id) => (activeFilterId = id)" />
     </div>
 
     <div v-show="showFilters" class="filters">
@@ -178,12 +229,16 @@ onMounted(async () => {
           <button type="button" class="chip" :class="{ on: !f.services.length }" @click="f.services = []">
             Meine Dienste
           </button>
+          <button type="button" class="chip" :class="{ on: f.services.includes('all') }"
+                  title="Alle verfolgten Dienste, auch ohne Abo" @click="f.services = ['all']">
+            Alle
+          </button>
           <button v-for="s in paidServices" :key="s.key" type="button" class="chip"
                   :class="{ on: f.services.includes(s.key), mine: s.subscribed }"
-                  @click="toggleIn(f.services, s.key)">{{ s.name }}</button>
+                  @click="toggleService(s.key)">{{ s.name }}</button>
           <button v-for="s in freeServices" :key="s.key" type="button" class="chip free"
                   :class="{ on: f.services.includes(s.key) }"
-                  @click="toggleIn(f.services, s.key)">{{ s.name }}</button>
+                  @click="toggleService(s.key)">{{ s.name }}</button>
         </div>
       </div>
 
@@ -214,6 +269,11 @@ onMounted(async () => {
         <button type="button" class="link" @click="reset">Alle Filter zurücksetzen</button>
       </div>
     </div>
+
+    <p v-if="activeFilter && filterChanged" class="editing">
+      <span>„{{ activeFilter.name }}“ wurde geändert.</span>
+      <button type="button" class="link" @click="applyFilter(activeFilter)">Änderung verwerfen</button>
+    </p>
 
     <p class="summary">
       <template v-if="!loading || items.length">
@@ -292,6 +352,9 @@ onMounted(async () => {
 .empty { padding: 40px 0; text-align: center; color: var(--muted); }
 .error { color: var(--danger); }
 .hint { color: var(--muted); font-size: .85rem; margin: -4px 0 12px; }
+.editing { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 12px 0 0;
+  padding: 8px 12px; border-radius: 8px; background: var(--panel-2);
+  border: 1px solid var(--border-strong); font-size: .9rem; }
 .muted { color: var(--muted); }
 @media (max-width: 600px) {
   .grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }

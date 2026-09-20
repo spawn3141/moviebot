@@ -6,13 +6,27 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 SCHEMA_FILE = Path(__file__).with_name("schema.sql")
 
-# Upgrade steps for existing databases: target version -> statements.
+def _split_lists_and_filters(conn: sqlite3.Connection) -> None:
+    """v7: dynamic lists became saved filters. Databases that jump here from an older version
+    never had those columns, so there is nothing to move."""
+    columns = {r[1] for r in conn.execute("PRAGMA table_info(lists)")}
+    if "kind" not in columns:
+        return
+    conn.execute("""INSERT INTO saved_filters (name, filters, position, created_at, updated_at)
+                    SELECT name, filters, position, created_at, updated_at
+                    FROM lists WHERE kind = 'dynamic' AND filters IS NOT NULL""")
+    conn.execute("DELETE FROM lists WHERE kind = 'dynamic'")
+    conn.execute("ALTER TABLE lists DROP COLUMN filters")
+    conn.execute("ALTER TABLE lists DROP COLUMN kind")
+
+
+# Upgrade steps for existing databases: target version -> SQL statements or functions.
 # New tables/indexes also come from schema.sql (CREATE ... IF NOT EXISTS); only changes to
 # existing tables need to be listed here.
-MIGRATIONS: dict[int, list[str]] = {
+MIGRATIONS: dict[int, list] = {
     3: [
         "ALTER TABLE titles ADD COLUMN watch_link TEXT",
         "ALTER TABLE titles ADD COLUMN offers_fetched_at TEXT",
@@ -27,6 +41,7 @@ MIGRATIONS: dict[int, list[str]] = {
         "ALTER TABLE titles ADD COLUMN ratings_fetched_at TEXT",
     ],
     6: [],  # lists/list_items come from schema.sql
+    7: [_split_lists_and_filters],  # lists hold titles, saved_filters hold searches
 }
 
 
@@ -71,9 +86,11 @@ def init_schema(conn: sqlite3.Connection, path: Path | str = ":memory:") -> None
             shutil.copy2(path, backup)
             log.info("Sicherung vor Migration: %s", backup)
         with conn:
+            # new tables first, so migrations can move data into them
+            conn.executescript(SCHEMA_FILE.read_text())
             for v in range(version + 1, SCHEMA_VERSION + 1):
-                for statement in MIGRATIONS[v]:
-                    conn.execute(statement)
+                for step in MIGRATIONS[v]:
+                    step(conn) if callable(step) else conn.execute(step)
             conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
         log.info("Datenbank von Version %d auf %d migriert", version, SCHEMA_VERSION)
     with conn:

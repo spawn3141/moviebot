@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api'
-import { currentLists, currentState, lists, loadLists, showToast } from '../store'
+import { currentLists, lists, loadLists, showToast } from '../store'
 import TitleCard from '../components/TitleCard.vue'
 
 const SORTS = [
@@ -28,9 +28,8 @@ const newName = ref('')
 const renaming = ref(false)
 const renameValue = ref('')
 
-const manualLists = computed(() => lists.items.filter((l) => l.kind === 'manual'))
 const selected = computed(() => lists.items.find((l) => l.id === selectedId.value) ?? null)
-// titles removed from this list in this session disappear right away
+// titles removed from a list in this session disappear right away
 const visible = computed(() => items.value.filter((i) => currentLists(i).includes(selectedId.value)))
 
 async function load() {
@@ -91,7 +90,7 @@ async function remove() {
   try {
     await api.deleteList(selectedId.value)
     await loadLists(true)
-    select(manualLists.value[0]?.id ?? null)
+    select(lists.items[0]?.id ?? null)
   } catch (e) {
     showToast(e.message)
   }
@@ -101,8 +100,8 @@ watch([selectedId, sort, onlyAvailable, showSeen], load)
 
 onMounted(async () => {
   await loadLists(true)
-  if (!selectedId.value || !manualLists.value.some((l) => l.id === selectedId.value)) {
-    select(manualLists.value[0]?.id ?? null)
+  if (!selectedId.value || !lists.items.some((l) => l.id === selectedId.value)) {
+    select(lists.items[0]?.id ?? null)
   }
   load()
 })
@@ -119,7 +118,7 @@ onMounted(async () => {
     </div>
 
     <div class="tabs">
-      <button v-for="l in manualLists" :key="l.id" type="button" class="tab"
+      <button v-for="l in lists.items" :key="l.id" type="button" class="tab"
               :class="{ on: l.id === selectedId }" @click="select(l.id)">
         {{ l.name }} <span class="count">{{ l.count }}</span>
         <span v-if="l.is_default" class="star" title="Standardliste">★</span>
@@ -174,6 +173,7 @@ h1 { font-size: 1.4rem; margin: 0; }
 .tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0; }
 .tab { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; }
 .tab.on { background: var(--accent-2); border-color: var(--accent-2); color: #fff; }
+
 .count { color: var(--muted); font-size: .8rem; }
 .tab.on .count { color: rgba(255, 255, 255, .8); }
 .star { color: var(--accent); }

@@ -58,3 +58,22 @@ export function ageLabel(item) {
     long: `ab ${item.age_rating} (geschätzt aus US-Freigabe ${item.age_rating_raw})`,
   }
 }
+
+/** Short description of a dynamic list's filter, e.g. "Serien · Action · bis 12 Jahre". */
+export function describeFilters(filters, serviceNames = {}) {
+  if (!filters) return ''
+  const parts = []
+  if (filters.media_type) parts.push(filters.media_type === 'tv' ? 'Serien' : 'Filme')
+  if (filters.genre?.length) parts.push(filters.genre.join(' / '))
+  if (filters.services?.includes('all')) parts.push('alle Dienste')
+  else if (filters.services?.length) parts.push(filters.services.map((k) => serviceNames[k] ?? k).join(', '))
+  if (filters.include_free) parts.push('inkl. kostenlos')
+  if (filters.max_age != null) {
+    parts.push(`bis ${filters.max_age} Jahre${filters.include_unrated ? ' (auch ohne Angabe)' : ''}`)
+  }
+  if (filters.year_from || filters.year_to) parts.push(`${filters.year_from || '…'}–${filters.year_to || '…'}`)
+  if (filters.min_rating) parts.push(`ab ★ ${filters.min_rating}`)
+  if (filters.new_days) parts.push(`neu: ${filters.new_days} Tage`)
+  if (filters.q) parts.push(`„${filters.q}“`)
+  return parts.join(' · ')
+}

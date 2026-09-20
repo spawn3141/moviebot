@@ -359,6 +359,32 @@ class MigrationTest(unittest.TestCase):
         self.assertEqual(tuple(service), (1, 0))
         self.assertTrue((tmp / "m.db.bak-v2").exists())
 
+    def test_v6_dynamic_lists_become_saved_filters(self):
+        tmp = Path(tempfile.mkdtemp())
+        path = tmp / "m6.db"
+        old = sqlite3.connect(path)
+        old.executescript("""
+            CREATE TABLE schema_version (version INTEGER NOT NULL);
+            INSERT INTO schema_version VALUES (6);
+            CREATE TABLE lists (id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+                kind TEXT NOT NULL DEFAULT 'manual', filters TEXT,
+                is_default INTEGER NOT NULL DEFAULT 0, position INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+            CREATE TABLE list_items (list_id INTEGER NOT NULL, title_id INTEGER NOT NULL,
+                added_at TEXT NOT NULL, PRIMARY KEY (list_id, title_id));
+            INSERT INTO lists (name, kind, is_default, created_at, updated_at)
+                VALUES ('Merkliste', 'manual', 1, 'x', 'x');
+            INSERT INTO lists (name, kind, filters, created_at, updated_at)
+                VALUES ('Kinderabend', 'dynamic', '{"genre": ["Animation"]}', 'x', 'x');
+        """)
+        old.close()
+        conn = db.connect(path)
+        self.addCleanup(conn.close)
+        self.assertEqual([tuple(r) for r in conn.execute("SELECT name, is_default FROM lists")],
+                         [("Merkliste", 1)])
+        self.assertEqual([tuple(r) for r in conn.execute("SELECT name, filters FROM saved_filters")],
+                         [("Kinderabend", '{"genre": ["Animation"]}')])
+
     def test_free_service_cannot_be_subscribed(self):
         conn = connect(":memory:")
         self.addCleanup(conn.close)

@@ -112,7 +112,7 @@ onBeforeUnmount(() => {
               <StarRating size="large" :model-value="state.rating"
                           @update:model-value="(r) => updateUserState(title, { rating: r })" />
               <div class="buttons lists">
-                <button v-for="l in lists.items.filter((x) => x.kind === 'manual')" :key="l.id"
+                <button v-for="l in lists.items" :key="l.id"
                         type="button" :class="{ on: currentLists(title).includes(l.id) }"
                         @click="setTitleLists(title, currentLists(title).includes(l.id)
                           ? currentLists(title).filter((id) => id !== l.id)

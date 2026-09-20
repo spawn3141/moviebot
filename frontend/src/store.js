@@ -15,6 +15,15 @@ export async function loadLists(force = false) {
   return lists.items
 }
 
+export const savedFilters = reactive({ items: [], loaded: false })
+
+export async function loadSavedFilters(force = false) {
+  if (savedFilters.loaded && !force) return savedFilters.items
+  savedFilters.items = await api.savedFilters()
+  savedFilters.loaded = true
+  return savedFilters.items
+}
+
 export function defaultList() {
   return lists.items.find((l) => l.is_default) ?? lists.items[0] ?? null
 }
