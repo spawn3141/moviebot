@@ -66,6 +66,7 @@ export function describeFilters(filters, serviceNames = {}) {
   if (filters.media_type) parts.push(filters.media_type === 'tv' ? 'Serien' : 'Filme')
   if (filters.genre?.length) parts.push(filters.genre.join(' / '))
   if (filters.services?.includes('all')) parts.push('alle Dienste')
+  else if (filters.services?.includes('mine')) parts.push('meine Dienste')
   else if (filters.services?.length) parts.push(filters.services.map((k) => serviceNames[k] ?? k).join(', '))
   if (filters.include_free) parts.push('inkl. kostenlos')
   if (filters.max_age != null) {

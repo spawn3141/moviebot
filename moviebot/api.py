@@ -31,6 +31,8 @@ class Availability(BaseModel):
     name: str
     free: bool
     since: str = Field(description="Tag, an dem wir den Titel im Dienst entdeckt haben")
+    verified: bool | None = Field(description="true = Abo-Verfügbarkeit bestätigt, "
+                                              "null = TMDB kennt noch keine deutschen Angebote")
     baseline: bool = Field(description="true = beim ersten Abgleich gefunden, war also vermutlich "
                                        "schon länger da; zählt nicht als Neuzugang")
 
@@ -38,6 +40,13 @@ class Availability(BaseModel):
 class UserState(BaseModel):
     status: Status
     rating: int | None
+
+
+class RecentEvent(BaseModel):
+    event: Literal["added", "readded", "new_season"]
+    date: str
+    season_number: int | None
+    service: str | None = Field(description="Name des Dienstes, bei 'new_season' leer")
 
 
 class TitleSummary(BaseModel):
@@ -59,6 +68,7 @@ class TitleSummary(BaseModel):
     age_rating_raw: str | None = Field(description="Originalangabe, z. B. '12' oder 'PG-13'")
     available_on: list[Availability]
     in_lists: list[int] = Field(description="IDs der Listen, auf denen der Titel steht")
+    recent: RecentEvent | None = Field(description="warum der Titel neu ist – nur mit new_days")
     user: UserState
 
 
@@ -184,14 +194,6 @@ class Genre(BaseModel):
     count: int
 
 
-class Event(BaseModel):
-    event: Literal["added", "readded", "new_season"]
-    date: str
-    season_number: int | None
-    service: str | None
-    title: TitleSummary
-
-
 class FailedRun(BaseModel):
     service: str
     media_type: str
@@ -199,11 +201,30 @@ class FailedRun(BaseModel):
     message: str | None
 
 
+class LastRun(BaseModel):
+    finished_at: str | None
+    added: int = Field(description="neu in einem Dienst")
+    readded: int = Field(description="nach einer Pause wieder da")
+    removed: int = Field(description="nicht mehr im Abo")
+    new_seasons: int
+    failed: list[str] = Field(description="Dienste, deren Abgleich fehlschlug")
+
+
+class Progress(BaseModel):
+    phase: Literal["catalogs", "details"]
+    done: int
+    total: int
+    label: str = Field(description="woran gerade gearbeitet wird")
+    eta_seconds: int | None = Field(description="grobe Schätzung der Restzeit dieser Phase")
+
+
 class Schedule(BaseModel):
     time: str | None = Field(description="Uhrzeit des täglichen Abgleichs, null = aus")
     running: bool
     next_run: str | None
     last_error: str | None
+    last_result: LastRun | None = Field(description="Ergebnis des letzten Abgleichs")
+    progress: Progress | None = Field(description="nur während eines laufenden Abgleichs")
 
 
 class Status_(BaseModel):
@@ -270,8 +291,8 @@ def create_app(cfg: Config, scheduler: SnapshotScheduler | None = None) -> FastA
     def list_titles(
         conn: Conn,
         services: Annotated[list[str] | None, Query(
-            description="Dienste (z. B. netflix), 'all' = alle verfolgten. "
-                        "Leer = meine Abos (+ kostenlose, falls eingestellt)")] = None,
+            description="Dienste (z. B. netflix), 'all' = alle verfolgten, "
+                        "'mine' = meine Abos (+ kostenlose, falls eingestellt) – wie leer")] = None,
         include_free: Annotated[bool | None, Query(
             description="Nur ohne 'services': kostenlose einbeziehen (leer = Einstellung)")] = None,
         media_type: MediaType | None = None,
@@ -401,19 +422,6 @@ def create_app(cfg: Config, scheduler: SnapshotScheduler | None = None) -> FastA
         except LookupError:
             raise HTTPException(status_code=404, detail="Filter nicht gefunden")
 
-    @app.get("/api/new", response_model=list[Event], tags=["Titel"],
-             summary="Neu in meinen Diensten (Neuzugänge und neue Staffeln)")
-    def new_titles(
-        conn: Conn,
-        days: Annotated[int, Query(ge=1, le=365)] = 7,
-        services: list[str] | None = Query(default=None),
-        include_free: bool | None = None,
-    ):
-        try:
-            return queries.list_events(conn, days, services, include_free)
-        except ValueError as e:
-            raise bad_request(e)
-
     @app.get("/api/genres", response_model=list[Genre], tags=["Filter"])
     def genres(conn: Conn, media_type: MediaType | None = None):
         return queries.list_genres(conn, media_type)
@@ -446,7 +454,10 @@ def create_app(cfg: Config, scheduler: SnapshotScheduler | None = None) -> FastA
 
     @app.get("/api/status", response_model=Status_, tags=["System"])
     def status(conn: Conn):
-        return {**queries.status(conn), "schedule": scheduler.info() if scheduler else None}
+        schedule = scheduler.info() if scheduler else None
+        if schedule and not schedule["last_result"]:
+            schedule["last_result"] = queries.get_run_summary(conn)  # e.g. after a restart
+        return {**queries.status(conn), "schedule": schedule}
 
     @app.post("/api/snapshot", response_model=SnapshotStarted, status_code=202, tags=["System"],
               summary="Abgleich mit TMDB jetzt starten (läuft im Hintergrund)")

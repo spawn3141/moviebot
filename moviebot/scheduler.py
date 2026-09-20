@@ -13,9 +13,10 @@ import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import date, datetime, time, timedelta
+from time import monotonic  # `time` is datetime.time here
 from pathlib import Path
 
-from . import snapshot
+from . import queries, snapshot
 from .config import Config
 from .db import connect
 from .tmdb import TMDBClient
@@ -67,6 +68,9 @@ class SnapshotScheduler:
         self.running = False
         self.last_error: str | None = None
         self.last_finished: datetime | None = None
+        self.last_result: dict | None = None  # what the last run changed
+        self.progress: dict | None = None     # what the current run is doing
+        self._phase_started: float = 0.0
         self._last_auto_attempt: date | None = None
         self._stop = threading.Event()
         self._wake = threading.Event()
@@ -110,6 +114,8 @@ class SnapshotScheduler:
             "running": running,
             "next_run": next_run.isoformat(timespec="minutes") if next_run else None,
             "last_error": self.last_error,
+            "last_result": self.last_result,
+            "progress": self.progress,
         }
 
     # --- internals -----------------------------------------------------------------
@@ -119,6 +125,16 @@ class SnapshotScheduler:
             return False
         last = last_run_date(self.cfg.db_path)
         return last is None or last < now.date()
+
+    def _on_progress(self, step: dict) -> None:
+        """Remember what the run is doing, with a rough estimate of the time left."""
+        if not self.progress or self.progress["phase"] != step["phase"] or not step["done"]:
+            self._phase_started = monotonic()
+        eta = None
+        if step["done"] and step["total"]:
+            elapsed = monotonic() - self._phase_started
+            eta = round(elapsed / step["done"] * (step["total"] - step["done"]))
+        self.progress = {**step, "eta_seconds": eta}
 
     def _loop(self) -> None:
         while not self._stop.is_set():
@@ -142,15 +158,20 @@ class SnapshotScheduler:
             try:
                 conn = connect(self.cfg.db_path)
                 try:
-                    results = snapshot.run(conn, TMDBClient.from_config(self.cfg), self.cfg)
+                    since = queries.last_event_id(conn)
+                    results = snapshot.run(conn, TMDBClient.from_config(self.cfg), self.cfg,
+                                           progress=self._on_progress)
+                    self.last_result = queries.run_summary(conn, results, since)
+                    queries.store_run_summary(conn, self.last_result)
                 finally:
                     conn.close()
-                failed = [f"{s}/{m}" for (s, m), r in results.items() if r is None]
+                failed = self.last_result["failed"]
                 self.last_error = f"Fehlgeschlagen: {', '.join(failed)}" if failed else None
-                log.info("Abgleich fertig%s", f" ({self.last_error})" if failed else "")
+                log.info("Abgleich fertig: %s", self.last_result)
             except Exception as e:  # keep the server alive, show the problem in the UI
                 log.exception("Abgleich fehlgeschlagen")
                 self.last_error = str(e)
             finally:
                 self.running = False
+                self.progress = None
                 self.last_finished = datetime.now()

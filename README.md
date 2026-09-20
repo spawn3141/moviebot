@@ -35,7 +35,8 @@ Streaming-Verfügbarkeitsdaten: JustWatch (über TMDB).
 
 - **Entdecken**: filtern nach Film/Serie, Genre, Jahr, Dienst, Suche, „neu in N Tagen“; sortieren;
   gesehen / Sterne / nicht interessiert direkt auf der Kachel (mit Rückgängig).
-- **Neu**: Neuzugänge und neue Staffeln in deinen Diensten, nach Tagen gruppiert.
+- Neuzugänge und neue Staffeln über den Filter „Neu: N Tage“ (Kacheln zeigen „Neu bei WOW“
+  bzw. „Staffel 3“); beim ersten Start liegt dafür der gespeicherte Filter „Neu“ bereit.
 - **Listen**: Sammlungen von Titeln (☆ auf der Kachel = Standardliste, Detailansicht/Picker für
   mehrere Listen); anlegen, umbenennen, löschen, Standard festlegen. Titel dürfen auf 0..n Listen
   stehen und bleiben auch dann in der Liste, wenn sie in keinem Dienst mehr laufen.
@@ -54,7 +55,6 @@ parallel `cd frontend && npm run dev` → http://localhost:5173 (lädt Änderung
 | `GET /api/titles` | filtern (Dienst, Film/Serie, Genre, Jahr, Suche, neu in N Tagen) und sortieren |
 | `GET /api/titles/{id}` | alle Infos inkl. Staffeln und Angeboten |
 | `PUT /api/titles/{id}/state` | gesehen / Bewertung 1–5 / nicht interessiert |
-| `GET /api/new` | Neuzugänge und neue Staffeln in meinen Diensten |
 | `GET/PUT /api/services` | Dienste, Abos an/aus |
 | `GET/PUT /api/settings` | kostenlose Angebote einbeziehen |
 | `GET/POST /api/lists`, `PATCH/DELETE /api/lists/{id}` | Listen verwalten |
@@ -78,11 +78,14 @@ der Stimmen, damit 9,5 bei 3 Stimmen nicht vor 7,8 bei 5000 Stimmen landet.
   Wird `min_year` geändert, gelten dazukommende Titel nicht als neu, und herausfallende nicht als weg.
 - **Nicht mehr im Abo**: erst nach 2 Tagen in Folge fehlend; der Titel selbst bleibt in der Datenbank.
   Bricht ein Katalog um > 20 % ein, wird nichts als weg gezählt (vermutlich API-Lücke).
-- **Neue Staffeln**: laufende Serien werden täglich geprüft; eine Staffel gilt als neu, sobald ihr
-  Ausstrahlungsdatum erreicht ist. Hinweis: TMDB weiß nur, dass die *Serie* im Abo ist, nicht,
+- **Neue Staffeln**: geprüft werden nur Serien, die TMDB seit dem letzten Lauf als geändert meldet
+  (`/tv/changes`, ~25 Abfragen statt einer pro Serie); zusätzlich jede Serie spätestens alle
+  `series_refresh_days` Tage. Eine Staffel gilt als neu, sobald ihr Ausstrahlungsdatum erreicht ist. Hinweis: TMDB weiß nur, dass die *Serie* im Abo ist, nicht,
   ob die neue Staffel dort schon verfügbar ist.
 - **Gegenprüfung**: pro Titel wird die Verfügbarkeit einzeln nachgeschlagen (`verified`),
-  um Titel auszusortieren, die beim Dienst nur zum Leihen/Kaufen sind.
+  um Titel auszusortieren, die beim Dienst nur zum Leihen/Kaufen sind. Kennt TMDB für die Region
+  noch gar keine Angebote (oft bei brandneuen Titeln), gilt das als *unbekannt* (`NULL`): Der Titel
+  bleibt sichtbar, wird täglich erneut geprüft und erst nach 14 Tagen ohne Daten ausgeblendet.
 - **Angebote** (`offers`): bei jeder Detailabfrage werden alle Angebote des Titels gespeichert
   (Abo, kostenlos, mit Werbung, Leihen, Kaufen – bei allen Anbietern). Titel aus der Zeit davor
   bekommen sie beim nächsten ohnehin fälligen Abruf oder per `--backfill`.

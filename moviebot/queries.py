@@ -22,6 +22,10 @@ WEIGHTED_RATING_SQL = (
 
 # "Neueste zuerst": for series either the start of the newest released season (default) or,
 # like movies, the first release.
+# for the "added" sorting: the day we noticed a new season
+LAST_SEASON_EVENT_SQL = """(SELECT MAX(e.event_date) FROM events e
+    WHERE e.title_id = t.id AND e.event = 'new_season')"""
+
 NEWEST_SEASON_SQL = """COALESCE((SELECT MAX(s.air_date) FROM seasons s
     WHERE s.title_id = t.id AND s.season_number > 0
       AND s.air_date <= date('now', 'localtime')), t.release_date)"""
@@ -32,7 +36,8 @@ SORTS = {
     "popularity": "t.popularity DESC",
     "rating": f"{WEIGHTED_RATING_SQL} DESC",
     "newest": "t.release_date DESC",
-    "added": "added DESC, t.popularity DESC",
+    # newest of: came to a service / got a new season
+    "added": "activity DESC, t.popularity DESC",
     "title": "t.title COLLATE NOCASE ASC",
 }
 
@@ -107,7 +112,7 @@ def list_services(conn: sqlite3.Connection) -> list[dict]:
                COUNT(CASE WHEN t.media_type = 'movie' THEN 1 END) AS movies,
                COUNT(CASE WHEN t.media_type = 'tv' THEN 1 END) AS series
         FROM services s
-        LEFT JOIN availability a ON a.service = s.key AND a.removed_at IS NULL AND a.verified = 1
+        LEFT JOIN availability a ON a.service = s.key AND a.removed_at IS NULL AND COALESCE(a.verified, 1) = 1
         LEFT JOIN titles t ON t.id = a.title_id
         WHERE s.tracked = 1
         GROUP BY s.key ORDER BY s.free, s.name
@@ -126,13 +131,17 @@ def set_service_subscribed(conn: sqlite3.Connection, key: str, subscribed: bool)
     return next(s for s in list_services(conn) if s["key"] == key)
 
 
-ALL_SERVICES = "all"  # sentinel in `services`: every tracked service, also future ones
+# Sentinels in `services`, so that saved filters keep working when services are added later
+ALL_SERVICES = "all"    # every tracked service
+MY_SERVICES = "mine"    # my subscriptions (+ free ones, depending on the setting) – the default
 
 
 def selected_services(conn: sqlite3.Connection, services: list[str] | None,
                       include_free: bool | None) -> list[str]:
     if services and ALL_SERVICES in services:
         return [r[0] for r in conn.execute("SELECT key FROM services WHERE tracked = 1")]
+    if services and MY_SERVICES in services:
+        services = [s for s in services if s != MY_SERVICES] or None
     if services:
         known = {r[0] for r in conn.execute("SELECT key FROM services WHERE tracked = 1")}
         unknown = [s for s in services if s not in known]
@@ -218,7 +227,31 @@ def _lists_for(conn: sqlite3.Connection, title_ids: list[int]) -> dict[int, list
     return result
 
 
-def _summary(row: sqlite3.Row, available: list[dict], in_lists: list[int] | None = None) -> dict:
+def _recent_events(conn: sqlite3.Connection, title_ids: list[int], since: str,
+                   services: list[str]) -> dict[int, dict]:
+    """Newest relevant event per title: arrival in a service or a new season."""
+    if not title_ids:
+        return {}
+    rows = conn.execute(
+        f"""
+        SELECT e.title_id, e.event, e.event_date, e.season_number, s.name AS service_name
+        FROM events e LEFT JOIN services s ON s.key = e.service
+        WHERE e.title_id IN ({_placeholders(title_ids)}) AND e.event_date >= ?
+          AND (e.event = 'new_season' OR (e.event IN ('added', 'readded')
+               AND e.service IN ({_placeholders(services)})))
+        ORDER BY e.event_date, e.id
+        """,
+        [*title_ids, since, *services],
+    )
+    result: dict[int, dict] = {}
+    for r in rows:  # ordered oldest first, so the newest wins
+        result[r["title_id"]] = {"event": r["event"], "date": r["event_date"],
+                                 "season_number": r["season_number"], "service": r["service_name"]}
+    return result
+
+
+def _summary(row: sqlite3.Row, available: list[dict], in_lists: list[int] | None = None,
+             recent: dict | None = None) -> dict:
     return {
         "id": row["id"],
         "media_type": row["media_type"],
@@ -237,6 +270,7 @@ def _summary(row: sqlite3.Row, available: list[dict], in_lists: list[int] | None
         "age_rating_raw": row["age_rating_raw"],
         "available_on": available,
         "in_lists": in_lists or [],
+        "recent": recent,
         "user": {"status": row["status"] or "unseen", "rating": row["rating"]},
     }
 
@@ -246,10 +280,10 @@ def _availability_for(conn: sqlite3.Connection, title_ids: list[int],
     if not title_ids:
         return {}
     sql = f"""
-        SELECT a.title_id, s.key, s.name, s.free, a.first_seen, a.in_baseline
+        SELECT a.title_id, s.key, s.name, s.free, a.first_seen, a.in_baseline, a.verified
         FROM availability a JOIN services s ON s.key = a.service
         WHERE a.title_id IN ({_placeholders(title_ids)})
-          AND a.removed_at IS NULL AND a.verified = 1 AND s.tracked = 1
+          AND a.removed_at IS NULL AND COALESCE(a.verified, 1) = 1 AND s.tracked = 1
     """
     params: list = list(title_ids)
     if services is not None:
@@ -260,6 +294,7 @@ def _availability_for(conn: sqlite3.Connection, title_ids: list[int],
         result.setdefault(r["title_id"], []).append({
             "service": r["key"], "name": r["name"], "free": bool(r["free"]),
             "since": r["first_seen"],
+            "verified": None if r["verified"] is None else bool(r["verified"]),
             # picked up by the first scan: the title was there already, `since` is just that day
             "baseline": bool(r["in_baseline"]),
         })
@@ -311,8 +346,8 @@ def search_titles(conn: sqlite3.Connection, f: TitleFilter, today: date | None =
     if hidden:
         where.append(f"COALESCE(us.status, 'unseen') NOT IN ({_placeholders(hidden)})")
         params += hidden
+    since = (today - timedelta(days=f.new_days or 0)).isoformat()
     if f.new_days is not None:
-        since = (today - timedelta(days=f.new_days)).isoformat()
         where.append(f"""(avail.added >= ? OR EXISTS (
             SELECT 1 FROM events e WHERE e.title_id = t.id AND e.event = 'new_season'
               AND e.event_date >= ?))""")
@@ -332,7 +367,7 @@ def search_titles(conn: sqlite3.Connection, f: TitleFilter, today: date | None =
         {avail_join} (SELECT a.title_id,
                      MAX(CASE WHEN a.in_baseline = 0 THEN a.first_seen END) AS added
               FROM availability a
-              WHERE a.removed_at IS NULL AND a.verified = 1
+              WHERE a.removed_at IS NULL AND COALESCE(a.verified, 1) = 1
                 AND a.service IN ({_placeholders(services)})
               GROUP BY a.title_id) avail ON avail.title_id = t.id
         LEFT JOIN user_state us ON us.title_id = t.id
@@ -341,7 +376,9 @@ def search_titles(conn: sqlite3.Connection, f: TitleFilter, today: date | None =
     avail_params = list_params + avail_params
     total = conn.execute(f"SELECT COUNT(*) {base}", avail_params + params).fetchone()[0]
     rows = conn.execute(
-        f"SELECT t.*, us.status, us.rating, avail.added {base} ORDER BY {order_by} "
+        f"SELECT t.*, us.status, us.rating, avail.added, "
+        f"MAX(COALESCE(avail.added, ''), COALESCE({LAST_SEASON_EVENT_SQL}, '')) AS activity "
+        f"{base} ORDER BY {order_by} "
         "LIMIT ? OFFSET ?",
         avail_params + params + [f.page_size, (f.page - 1) * f.page_size],
     ).fetchall()
@@ -349,9 +386,11 @@ def search_titles(conn: sqlite3.Connection, f: TitleFilter, today: date | None =
     # inside a list also show services that are not currently selected
     available = _availability_for(conn, ids, None if f.list_id else services)
     lists = _lists_for(conn, ids)
+    recent = _recent_events(conn, ids, since, services) if f.new_days is not None else {}
     return {
         "total": total, "page": f.page, "page_size": f.page_size, "services": services,
-        "items": [_summary(r, available.get(r["id"], []), lists.get(r["id"], [])) for r in rows],
+        "items": [_summary(r, available.get(r["id"], []), lists.get(r["id"], []), recent.get(r["id"]))
+                  for r in rows],
     }
 
 
@@ -438,7 +477,7 @@ def set_user_state(conn: sqlite3.Connection, title_id: int, changes: dict) -> di
 def list_genres(conn: sqlite3.Connection, media_type: str | None = None) -> list[dict]:
     sql = """SELECT t.genres FROM titles t WHERE EXISTS (
                  SELECT 1 FROM availability a WHERE a.title_id = t.id
-                 AND a.removed_at IS NULL AND a.verified = 1)"""
+                 AND a.removed_at IS NULL AND COALESCE(a.verified, 1) = 1)"""
     params: list = []
     if media_type:
         sql += " AND t.media_type = ?"
@@ -448,46 +487,6 @@ def list_genres(conn: sqlite3.Connection, media_type: str | None = None) -> list
         for g in genres.unify(json.loads(raw)):
             counts[g] = counts.get(g, 0) + 1
     return [{"name": g, "count": n} for g, n in sorted(counts.items(), key=lambda x: -x[1])]
-
-
-def list_events(conn: sqlite3.Connection, days: int, services: list[str] | None,
-                include_free: bool | None, today: date | None = None) -> list[dict]:
-    """News feed: arrivals in the selected services and new seasons of series available there."""
-    today = today or date.today()
-    selected = selected_services(conn, services, include_free)
-    if not selected:
-        return []
-    since = (today - timedelta(days=days)).isoformat()
-    ph = _placeholders(selected)
-    rows = conn.execute(
-        f"""
-        SELECT e.id AS event_id, e.event, e.event_date, e.season_number, e.service AS event_service,
-               t.*, us.status, us.rating
-        FROM events e
-        JOIN titles t ON t.id = e.title_id
-        LEFT JOIN user_state us ON us.title_id = t.id
-        WHERE e.event_date >= ?
-          AND (
-            (e.event IN ('added', 'readded') AND e.service IN ({ph}) AND EXISTS (
-                SELECT 1 FROM availability a WHERE a.title_id = e.title_id AND a.service = e.service
-                  AND a.removed_at IS NULL AND a.verified = 1))
-            OR (e.event = 'new_season' AND EXISTS (
-                SELECT 1 FROM availability a WHERE a.title_id = e.title_id AND a.service IN ({ph})
-                  AND a.removed_at IS NULL AND a.verified = 1))
-          )
-        ORDER BY e.event_date DESC, t.popularity DESC
-        """,
-        [since, *selected, *selected],
-    ).fetchall()
-    ids = list({r["id"] for r in rows})
-    available = _availability_for(conn, ids, selected)
-    lists = _lists_for(conn, ids)
-    return [
-        {"event": r["event"], "date": r["event_date"], "season_number": r["season_number"],
-         "service": r["event_service"],
-         "title": _summary(r, available.get(r["id"], []), lists.get(r["id"], []))}
-        for r in rows
-    ]
 
 
 def status(conn: sqlite3.Connection) -> dict:
@@ -656,3 +655,35 @@ def delete_saved_filter(conn: sqlite3.Connection, filter_id: int) -> None:
     _one_filter(conn, filter_id)
     with conn:
         conn.execute("DELETE FROM saved_filters WHERE id = ?", (filter_id,))
+
+
+# --- what a snapshot run changed -----------------------------------------------------
+
+def last_event_id(conn: sqlite3.Connection) -> int:
+    return conn.execute("SELECT COALESCE(MAX(id), 0) FROM events").fetchone()[0]
+
+
+def store_run_summary(conn: sqlite3.Connection, summary: dict) -> None:
+    """Keep the last summary in the database so it survives a restart."""
+    with conn:
+        set_setting(conn, "last_run_summary", json.dumps(summary, ensure_ascii=False))
+
+
+def get_run_summary(conn: sqlite3.Connection) -> dict | None:
+    stored = get_setting(conn, "last_run_summary")
+    return json.loads(stored) if stored else None
+
+
+def run_summary(conn: sqlite3.Connection, results: dict, since_event_id: int) -> dict:
+    """Counts of what a snapshot run produced, for the UI and the log."""
+    counts = dict(conn.execute(
+        "SELECT event, COUNT(*) FROM events WHERE id > ? GROUP BY event", (since_event_id,)))
+    return {
+        "added": counts.get("added", 0),
+        "readded": counts.get("readded", 0),
+        "removed": counts.get("removed", 0),
+        "new_seasons": counts.get("new_season", 0),
+        "failed": [f"{service}/{media_type}"
+                   for (service, media_type), r in results.items() if r is None],
+        "finished_at": now_iso(),
+    }

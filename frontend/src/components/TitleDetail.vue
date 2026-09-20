@@ -140,6 +140,7 @@ onBeforeUnmount(() => {
               {{ a.name }}
               <small>
                 · seit {{ formatDate(a.since) }}<template v-if="a.baseline"> (erster Abgleich)</template>
+                <template v-if="a.verified === null"> · noch nicht bestätigt</template>
               </small>
             </li>
           </ul>

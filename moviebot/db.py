@@ -6,7 +6,7 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 SCHEMA_FILE = Path(__file__).with_name("schema.sql")
 
 def _split_lists_and_filters(conn: sqlite3.Connection) -> None:
@@ -42,6 +42,10 @@ MIGRATIONS: dict[int, list] = {
     ],
     6: [],  # lists/list_items come from schema.sql
     7: [_split_lists_and_filters],  # lists hold titles, saved_filters hold searches
+    8: [  # "no German data" was stored as contradicted; re-check those
+        """UPDATE availability SET verified = NULL WHERE verified = 0 AND removed_at IS NULL
+           AND NOT EXISTS (SELECT 1 FROM offers o WHERE o.title_id = availability.title_id)""",
+    ],
 }
 
 

@@ -51,9 +51,21 @@ const activeFilterId = ref(null)   // saved filter currently applied
 const paidServices = computed(() => services.value.filter((s) => !s.free))
 const freeServices = computed(() => services.value.filter((s) => s.free))
 const serviceNames = computed(() => Object.fromEntries(services.value.map((s) => [s.key, s.name])))
-const activeFilterCount = computed(() =>
-  ['media_type', 'year_from', 'year_to', 'new_days', 'max_age'].filter((k) => f[k] !== '').length
-  + f.genre.length + f.services.length + (f.show_seen ? 1 : 0))
+const activeFilterCount = computed(() => {
+  // the service selection is a filter too – except "Alle", which restricts nothing
+  const services = f.services.includes('all') ? 0 : Math.max(f.services.length, 1)
+  return ['media_type', 'year_from', 'year_to', 'new_days', 'max_age'].filter((k) => f[k] !== '').length
+    + f.genre.length + services + (f.show_seen ? 1 : 0)
+})
+
+/** "in Prime Video, WOW" – but not a wall of 19 names. */
+const searchedInText = computed(() => {
+  const names = searchedIn.value.map((k) => serviceNames.value[k] ?? k)
+  if (!names.length) return ''
+  if (searchedIn.value.length >= services.value.length && services.value.length) return 'in allen Diensten'
+  if (names.length > 3) return `in ${names.slice(0, 3).join(', ')} und ${names.length - 3} weiteren`
+  return `in ${names.join(', ')}`
+})
 
 // Cards marked as seen / not interested disappear right away (undo via the toast).
 const visible = computed(() =>
@@ -122,7 +134,8 @@ const filterChanged = computed(() => {
 })
 
 function normalize(filters) {
-  return Object.fromEntries(Object.entries(filters)
+  const withServices = { services: ['mine'], ...filters }  // "mine" is the implicit default
+  return Object.fromEntries(Object.entries(withServices)
     .filter(([k, v]) => k !== 'sort' && v !== '' && v !== false && !(Array.isArray(v) && !v.length))
     .map(([k, v]) => [k, Array.isArray(v) ? [...v].sort() : String(v)])
     .sort(([a], [b]) => a.localeCompare(b)))
@@ -132,7 +145,7 @@ function applyFilter(entry) {
   activeFilterId.value = entry.id
   // deep copy: otherwise editing the filter here would also change the stored one in memory
   const stored = JSON.parse(JSON.stringify(entry.filters))
-  Object.assign(f, { ...DEFAULTS, genre: [], services: [], ...stored })
+  Object.assign(f, { ...DEFAULTS, genre: [], ...stored, services: servicesFromSaved(stored.services) })
   search.value = f.q
 }
 
@@ -142,10 +155,19 @@ function currentFilters() {
                 'include_unrated', 'new_days']
   const filters = Object.fromEntries(
     keys.map((k) => [k, f[k]]).filter(([, v]) => (Array.isArray(v) ? v.length : v !== '' && v !== false)))
-  return { ...filters, sort: f.sort }
+  // empty selection means "meine Dienste"; saved filters store that explicitly
+  return { ...filters, services: f.services.length ? f.services : ['mine'], sort: f.sort }
 }
 
-const canSave = computed(() => Object.keys(currentFilters()).some((k) => k !== 'sort'))
+// Worth saving / worth calling "unsaved": anything that actually narrows the view.
+// "Alle Dienste" does not, and "Meine Dienste" is the app's default rather than a setup.
+const canSave = computed(() => Object.entries(currentFilters()).some(([key, value]) =>
+  key !== 'sort' && !(key === 'services' && value.includes('all'))))
+
+/** A saved filter stores "mine"; in the UI that is the empty selection. */
+function servicesFromSaved(services) {
+  return !services || services.includes('mine') ? [] : services
+}
 
 
 
@@ -164,7 +186,8 @@ function toggleIn(list, value) {
 onBeforeUnmount(() => clearTimeout(saveTimer))
 
 function reset() {
-  Object.assign(f, { ...DEFAULTS, genre: [], services: [] })
+  // "keine Filter" means no restriction at all – including the service selection
+  Object.assign(f, { ...DEFAULTS, genre: [], services: ['all'] })
   search.value = ''
   activeFilterId.value = null
 }
@@ -226,12 +249,12 @@ onMounted(async () => {
       <div class="filter-row">
         <span class="label">Dienste</span>
         <div class="chips">
-          <button type="button" class="chip" :class="{ on: !f.services.length }" @click="f.services = []">
-            Meine Dienste
-          </button>
           <button type="button" class="chip" :class="{ on: f.services.includes('all') }"
                   title="Alle verfolgten Dienste, auch ohne Abo" @click="f.services = ['all']">
             Alle
+          </button>
+          <button type="button" class="chip" :class="{ on: !f.services.length }" @click="f.services = []">
+            Meine Dienste
           </button>
           <button v-for="s in paidServices" :key="s.key" type="button" class="chip"
                   :class="{ on: f.services.includes(s.key), mine: s.subscribed }"
@@ -277,10 +300,7 @@ onMounted(async () => {
 
     <p class="summary">
       <template v-if="!loading || items.length">
-        {{ total }} {{ total === 1 ? 'Titel' : 'Titel' }}
-        <template v-if="searchedIn.length">
-          in {{ searchedIn.map((k) => serviceNames[k] ?? k).join(', ') }}
-        </template>
+        {{ total }} Titel {{ searchedInText }}
       </template>
     </p>
 

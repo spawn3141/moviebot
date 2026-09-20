@@ -63,6 +63,21 @@ class SchedulerTest(unittest.TestCase):
             self.assertFalse(self.scheduler.trigger())
         self.assertTrue(self.scheduler.trigger())
 
+    def test_info_reports_the_last_result(self):
+        self.assertIsNone(self.scheduler.info()["last_result"])
+        self.scheduler.last_result = {"added": 3, "readded": 0, "removed": 1, "new_seasons": 2,
+                                      "failed": [], "finished_at": "2026-09-20T06:04"}
+        self.assertEqual(self.scheduler.info()["last_result"]["added"], 3)
+
+    def test_progress_is_reported_with_an_estimate(self):
+        self.assertIsNone(self.scheduler.info()["progress"])
+        self.scheduler._on_progress({"phase": "details", "done": 0, "total": 100, "label": "Titeldaten"})
+        self.scheduler._phase_started -= 10  # pretend 10 seconds have passed
+        self.scheduler._on_progress({"phase": "details", "done": 25, "total": 100, "label": "Titeldaten"})
+        progress = self.scheduler.info()["progress"]
+        self.assertEqual((progress["phase"], progress["done"], progress["total"]), ("details", 25, 100))
+        self.assertGreaterEqual(progress["eta_seconds"], 29)  # ~30s left at that rate
+
     def test_lock_is_exclusive(self):
         with snapshot_lock(self.cfg.db_path) as first:
             with snapshot_lock(self.cfg.db_path) as second:

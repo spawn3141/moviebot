@@ -28,6 +28,7 @@ class Config:
     monetization: list[str] = field(default_factory=lambda: ["flatrate"])
     services: list[Service] = field(default_factory=list)
     initial_subscriptions: list[str] = field(default_factory=list)
+    series_refresh_days: int = 7   # refresh every running series at least this often
     removal_grace_runs: int = 2
     max_drop_ratio: float = 0.2
     snapshot_time: time | None = None  # daily snapshot in `serve`; None = off
@@ -85,6 +86,7 @@ def load_config(path: Path | None = None) -> Config:
         monetization=list(scope.get("monetization", ["flatrate"])),
         services=services,
         initial_subscriptions=list(data.get("subscriptions", {}).get("initial", [])),
+        series_refresh_days=int(snapshot.get("series_refresh_days", 7)),
         removal_grace_runs=int(snapshot.get("removal_grace_runs", 2)),
         max_drop_ratio=float(snapshot.get("max_drop_ratio", 0.2)),
         snapshot_time=snapshot_time,

@@ -137,6 +137,9 @@ free = true
 time = "06:00"
 
 [snapshot]
+# Laufende Serien werden nur abgefragt, wenn TMDB eine Änderung meldet – spätestens aber
+# nach so vielen Tagen (Sicherheitsnetz, falls die Änderungsliste etwas übersieht).
+series_refresh_days = 7
 # Ein Titel gilt erst als "nicht mehr im Abo", wenn er so viele Tage in Folge fehlt.
 removal_grace_runs = 2
 # Ist ein Snapshot um mehr als diesen Anteil kleiner als der gespeicherte Katalog,

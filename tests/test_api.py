@@ -108,6 +108,16 @@ class ApiTest(unittest.TestCase):
         self.assertEqual((item["age_rating"], item["age_rating_source"], item["age_rating_raw"]),
                          (16, "us", "R"))
 
+    def test_my_services_can_be_stored_in_a_filter(self):
+        # "mine" behaves like an empty selection, but can be saved explicitly
+        self.assertEqual(self.titles(services="mine"), self.titles())
+        created = self.client.post("/api/filters", json={
+            "name": "Meine Action", "filters": {"services": ["mine"], "genre": ["Action"]}}).json()
+        self.assertEqual(created["count"], 2)  # Action A (prime) and Serie B (wow), not Netflix C
+        self.assertEqual([i["title"] for i in
+                          self.client.get("/api/titles", params={"filter_id": created["id"]}).json()["items"]],
+                         ["Action A", "Serie B"])
+
     def test_all_services(self):
         titles = self.titles(services="all")
         self.assertEqual(titles, ["Action A", "Serie B", "Netflix C", "Frei D", "Zufall G"])
@@ -119,6 +129,17 @@ class ApiTest(unittest.TestCase):
     def test_rating_sort_is_weighted_by_vote_count(self):
         self.assertEqual(self.titles(sort="rating"), ["Action A", "Serie B", "Zufall G"])
         self.assertEqual(self.titles(sort="added")[0], "Serie B")
+
+    def test_added_sort_counts_new_seasons(self):
+        # "Action A" came with the baseline, so the series added two days ago comes first ...
+        self.assertEqual(self.titles(sort="added")[0], "Serie B")
+        # ... until it gets a new season today (fixture has one for the series, add one here)
+        conn = connect(self.cfg.db_path)
+        self.addCleanup(conn.close)
+        with conn:
+            conn.execute("INSERT INTO events (title_id, event, season_number, event_date) "
+                         "VALUES (?, 'new_season', 2, ?)", (self.ids["action"], TODAY.isoformat()))
+        self.assertEqual(self.titles(sort="added")[0], "Action A")
 
     def test_invalid_input(self):
         self.assertEqual(self.client.get("/api/titles", params={"sort": "x"}).status_code, 422)
@@ -263,18 +284,30 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(self.client.post("/api/filters", json={
             "name": "Kaputt", "filters": {"genre": "Action"}}).status_code, 400)
 
+    def test_default_filter_is_offered_once_and_can_be_deleted(self):
+        filters = self.client.get("/api/filters").json()
+        self.assertEqual([(f["name"], f["filters"]) for f in filters],
+                         [("Neu", {"new_days": 14, "services": ["mine"], "sort": "added"})])
+        self.assertEqual(self.client.delete(f"/api/filters/{filters[0]['id']}").status_code, 204)
+        # a restart must not bring it back
+        conn = connect(self.cfg.db_path)
+        self.addCleanup(conn.close)
+        catalog.bootstrap(conn, self.cfg)
+        self.assertEqual(self.client.get("/api/filters").json(), [])
+
     def test_saved_filter_rules(self):
         self.assertEqual(self.client.post("/api/filters", json={
             "name": "Leer", "filters": {}}).status_code, 400)
         self.assertEqual(self.client.post("/api/filters", json={
             "name": "Quatsch", "filters": {"foo": 1}}).status_code, 400)
+        self.client.delete("/api/filters/1")  # the ready-made "Neu" filter
         saved = self.client.post("/api/filters", json={
             "name": "Action", "filters": {"genre": ["Action"]}}).json()
         renamed = self.client.patch(f"/api/filters/{saved['id']}", json={"name": "Action pur"})
         self.assertEqual(renamed.json()["name"], "Action pur")
         # a filter that no longer works shows up as an error instead of breaking the page
         self.client.patch(f"/api/filters/{saved['id']}", json={"filters": {"services": ["weg"]}})
-        entry = self.client.get("/api/filters").json()[0]
+        entry = [f for f in self.client.get("/api/filters").json() if f["id"] == saved["id"]][0]
         self.assertIn("weg", entry["error"])
         self.assertEqual(self.client.get("/api/titles", params={"filter_id": saved["id"]}).status_code, 400)
         self.assertEqual(self.client.get("/api/titles", params={"filter_id": 999}).status_code, 404)
@@ -282,10 +315,37 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(self.client.delete(f"/api/filters/{saved['id']}").status_code, 204)
         self.assertEqual(self.client.get("/api/filters").json(), [])
 
-    def test_new_feed(self):
-        events = self.client.get("/api/new", params={"days": 7}).json()
-        self.assertEqual([(e["event"], e["title"]["title"]) for e in events],
-                         [("new_season", "Serie B"), ("added", "Serie B")])
+    def test_new_filter_explains_why_a_title_is_new(self):
+        items = self.client.get("/api/titles", params={"new_days": 7}).json()["items"]
+        self.assertEqual([(i["title"], i["recent"]["event"], i["recent"]["season_number"])
+                          for i in items], [("Serie B", "new_season", 3)])
+        # without the filter there is nothing to explain
+        self.assertIsNone(self.client.get("/api/titles").json()["items"][0]["recent"])
+
+    def test_run_summary_counts_only_new_events(self):
+        from moviebot import queries
+        from moviebot.db import connect
+
+        conn = connect(self.cfg.db_path)
+        self.addCleanup(conn.close)
+        since = queries.last_event_id(conn)  # the fixture events are older
+        with conn:
+            for event, season in (("added", None), ("added", None), ("readded", None),
+                                  ("removed", None), ("new_season", 4)):
+                conn.execute("INSERT INTO events (title_id, service, event, season_number, event_date) "
+                             "VALUES (?, 'prime', ?, ?, '2026-09-20')",
+                             (self.ids["action"], event, season))
+        results = {("prime", "movie"): object(), ("wow", "tv"): None}  # one service failed
+        summary = queries.run_summary(conn, results, since)
+        self.assertEqual({k: v for k, v in summary.items() if k != "finished_at"},
+                         {"added": 2, "readded": 1, "removed": 1, "new_seasons": 1, "failed": ["wow/tv"]})
+        self.assertIsNotNone(summary["finished_at"])
+        # a second run right after reports nothing
+        self.assertEqual(queries.run_summary(conn, {}, queries.last_event_id(conn))["added"], 0)
+        # the summary survives a restart, because it is stored
+        queries.store_run_summary(conn, summary)
+        self.assertEqual(queries.get_run_summary(conn)["added"], 2)
+        self.assertEqual(self.client.get("/api/status").json()["schedule"], None)  # no scheduler here
 
     def test_genres_and_status(self):
         names = [g["name"] for g in self.client.get("/api/genres").json()]

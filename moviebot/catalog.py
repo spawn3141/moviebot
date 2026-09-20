@@ -288,8 +288,25 @@ def ensure_default_list(conn: sqlite3.Connection) -> None:
     )
 
 
+DEFAULT_FILTER = ("Neu", {"new_days": 14, "services": ["mine"], "sort": "added"})
+
+
+def ensure_default_filter(conn: sqlite3.Connection) -> None:
+    """Offer a ready-made "what's new" filter once; the user may rename or delete it."""
+    if get_setting(conn, "default_filter_created"):
+        return
+    name, filters = DEFAULT_FILTER
+    now = now_iso()
+    conn.execute(
+        "INSERT INTO saved_filters (name, filters, created_at, updated_at) VALUES (?, ?, ?, ?)",
+        (name, _dumps(filters), now, now),
+    )
+    set_setting(conn, "default_filter_created", "1")
+
+
 def bootstrap(conn: sqlite3.Connection, cfg: Config) -> None:
     """Bring the database in line with the config before serving or scanning."""
     with conn:
         sync_services(conn, cfg)
         ensure_default_list(conn)
+        ensure_default_filter(conn)

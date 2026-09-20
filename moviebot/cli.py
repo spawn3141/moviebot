@@ -4,7 +4,7 @@ import logging
 import sys
 from pathlib import Path
 
-from . import catalog, snapshot
+from . import catalog, queries, snapshot
 from .config import load_config
 from .db import SchemaMismatch, connect, get_setting
 from .scheduler import SnapshotScheduler, snapshot_lock
@@ -66,6 +66,7 @@ def cmd_snapshot(cfg, args) -> int:
             print("Es läuft bereits ein Abgleich (z. B. im Server). Bitte später erneut versuchen.",
                   file=sys.stderr)
             return 3
+        since = queries.last_event_id(conn)
         results = snapshot.run(
             conn, client, cfg, service_keys=args.service or None,
             fetch_details=not args.skip_details, details_limit=args.details_limit,
@@ -80,10 +81,10 @@ def cmd_snapshot(cfg, args) -> int:
             continue
         print(f"{label}: {r.status}, {r.total} Titel, +{len(r.added)} neu, "
               f"+{len(r.readded)} wieder da, -{len(r.removed)} nicht mehr im Abo")
-    seasons = conn.execute(
-        "SELECT COUNT(*) FROM events WHERE event = 'new_season' AND event_date = date('now', 'localtime')"
-    ).fetchone()[0]
-    print(f"Neue Staffeln heute: {seasons}")
+    summary = queries.run_summary(conn, results, since)
+    queries.store_run_summary(conn, summary)
+    print(f"Insgesamt: {summary['added']} neu, {summary['readded']} wieder da, "
+          f"{summary['removed']} nicht mehr im Abo, {summary['new_seasons']} neue Staffeln")
     print(f"TMDB-Abfragen: {client.request_count}")
     return 1 if failed else 0
 

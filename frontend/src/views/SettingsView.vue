@@ -51,16 +51,18 @@ function pollWhileRunning() {
   clearTimeout(pollTimer)
   if (!status.value?.schedule?.running) return
   pollTimer = setTimeout(async () => {
+    // while a run is going on, ask more often so the progress bar moves
     const wasRunning = status.value.schedule.running
     status.value = await api.status()
     if (wasRunning && !status.value.schedule.running) {
+      const result = status.value.schedule.last_result
       showToast(status.value.schedule.last_error
         ? `Abgleich mit Fehlern beendet: ${status.value.schedule.last_error}`
-        : 'Abgleich fertig')
+        : `Abgleich fertig – ${summarize(result)}`)
       services.value = await api.services()
     }
     pollWhileRunning()
-  }, 5000)
+  }, 3000)
 }
 
 async function startSnapshot() {
@@ -74,6 +76,28 @@ async function startSnapshot() {
 }
 
 onBeforeUnmount(() => clearTimeout(pollTimer))
+
+/** "12 neu, 2 neue Staffeln, 1 nicht mehr im Abo" */
+function summarize(result) {
+  if (!result) return 'keine Änderungen'
+  const parts = []
+  if (result.added) parts.push(`${result.added} neu`)
+  if (result.readded) parts.push(`${result.readded} wieder da`)
+  if (result.new_seasons) parts.push(`${result.new_seasons} neue ${result.new_seasons === 1 ? 'Staffel' : 'Staffeln'}`)
+  if (result.removed) parts.push(`${result.removed} nicht mehr im Abo`)
+  return parts.length ? parts.join(', ') : 'keine Änderungen'
+}
+
+const PHASES = {
+  catalogs: 'Kataloge der Dienste werden verglichen',
+  details: 'Titeldaten werden geladen (Genres, Staffeln, Verfügbarkeit)',
+}
+
+function formatEta(seconds) {
+  if (seconds == null) return ''
+  if (seconds < 60) return 'noch weniger als 1 Minute'
+  return `noch etwa ${Math.round(seconds / 60)} Min.`
+}
 
 function formatTimestamp(iso) {
   return iso ? new Date(iso).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }) : 'noch nie'
@@ -151,15 +175,47 @@ onMounted(async () => {
         <template v-if="status.schedule?.next_run">
           <dt>Nächster Abgleich</dt><dd>{{ formatTimestamp(status.schedule.next_run) }}</dd>
         </template>
-        <dt>Letzter Abgleich</dt><dd>{{ formatTimestamp(status.last_snapshot) }}</dd>
+        <dt>Letzter Abgleich</dt>
+        <dd>
+          {{ formatTimestamp(status.last_snapshot) }}
+          <template v-if="status.schedule?.last_result">
+            <span class="muted">– {{ summarize(status.schedule.last_result) }}</span>
+          </template>
+        </dd>
         <dt>Titel</dt><dd>{{ status.titles }}</dd>
         <dt>mit vollständiger Angebotsliste</dt><dd>{{ status.titles_with_offers }}</dd>
       </dl>
       <p v-if="status.schedule" class="actions">
         <button type="button" :disabled="status.schedule.running" @click="startSnapshot">
-          {{ status.schedule.running ? 'Abgleich läuft … (dauert einige Minuten)' : 'Jetzt abgleichen' }}
+          {{ status.schedule.running ? 'Abgleich läuft …' : 'Jetzt abgleichen' }}
         </button>
+        <RouterLink v-if="status.schedule.last_result?.added || status.schedule.last_result?.new_seasons"
+                    to="/neu" class="to-new">Neuzugänge ansehen</RouterLink>
       </p>
+      <div v-if="status.schedule?.running" class="progress">
+        <template v-if="status.schedule.progress">
+          <p class="line">
+            {{ PHASES[status.schedule.progress.phase] }}
+            <span class="muted">
+              – {{ status.schedule.progress.label }}
+              ({{ status.schedule.progress.done }} von {{ status.schedule.progress.total }})
+              {{ formatEta(status.schedule.progress.eta_seconds) }}
+            </span>
+          </p>
+          <div class="bar" role="progressbar"
+               :aria-valuenow="status.schedule.progress.done" aria-valuemin="0"
+               :aria-valuemax="status.schedule.progress.total">
+            <div class="fill" :style="{ width: `${Math.round(100 * status.schedule.progress.done
+                                                             / Math.max(status.schedule.progress.total, 1))}%` }" />
+          </div>
+          <p v-if="status.schedule.progress.phase === 'details'" class="muted small">
+            Für neue Titel und laufende Serien werden Einzelabfragen gemacht; nur so lassen sich
+            neue Staffeln und die Verfügbarkeit im Abo prüfen.
+          </p>
+        </template>
+        <p v-else class="muted">Abgleich startet …</p>
+      </div>
+
       <p v-if="status.schedule?.last_error" class="error">Letzter Abgleich: {{ status.schedule.last_error }}</p>
       <p v-if="status.failed_since_last_snapshot.length" class="error">
         Fehlgeschlagen: {{ status.failed_since_last_snapshot.map((r) => `${r.service}/${r.media_type}`).join(', ') }}
@@ -187,5 +243,10 @@ h2 { font-size: 1rem; margin: 28px 0 4px; }
 .facts { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 8px 0 0; }
 .facts dt { color: var(--muted); }
 .facts dd { margin: 0; }
-.actions { margin-top: 14px; }
+.actions { margin-top: 14px; display: flex; gap: 14px; align-items: center; }
+.progress { margin-top: 12px; }
+.progress .line { margin: 0 0 6px; font-size: .9rem; }
+.bar { height: 6px; border-radius: 999px; background: var(--panel-2); overflow: hidden; }
+.fill { height: 100%; background: var(--accent-2); transition: width .3s ease; }
+.to-new { font-size: .9rem; }
 </style>

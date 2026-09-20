@@ -21,17 +21,20 @@ availability and, for running series, detects newly released seasons.
 import json
 import logging
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, timedelta
 
 from . import catalog
 from .config import FREE_MONETIZATION, Config, Service
-from .db import now_iso
-from .tmdb import TMDBClient, TMDBError, TMDBNotFound, provider_ids_with
+from .db import get_setting, now_iso, set_setting
+from .tmdb import TMDBClient, TMDBError, TMDBNotFound, has_region_offers, provider_ids_with
 
 log = logging.getLogger(__name__)
 
 COMPLETED_STATUSES = ("baseline", "rescoped", "ok", "suspicious")
+# How long a title may stay "not verifiable" before we treat it as not available after all.
+UNVERIFIED_GRACE_DAYS = 14
 FINISHED_TV_STATUSES = ("Ended", "Canceled")
 
 
@@ -204,32 +207,41 @@ def snapshot_service(conn: sqlite3.Connection, client: TMDBClient, cfg: Config, 
 
 
 def update_details(conn: sqlite3.Connection, client: TMDBClient, cfg: Config, today: date,
-                   limit: int | None = None, backfill: int = 0) -> int:
+                   limit: int | None = None, backfill: int = 0,
+                   changed_tv_ids: set[int] | None = None,
+                   progress: Callable[[dict], None] | None = None) -> int:
     """Fetch details where needed. One request per title does three jobs:
 
     1. metadata (genres, keywords, directors/creators, cast) for titles that lack it,
     2. verification of unverified availability via the title's watch/providers – the discover
        filter might match a title that is only rent/buy at this service (`verified = 0`),
-    3. for series that are still running: refresh seasons to detect new ones (once per day).
+    3. for running series: refresh seasons to detect new ones. Instead of asking for every
+       series daily, only those TMDB reports as changed (`changed_tv_ids`) are refreshed, plus
+       every series that has not been refreshed for `series_refresh_days` days as a safety net.
 
     Every fetch also stores all offers of the title (`offers`) and its age rating. Titles from
     before these were stored only get them when they are fetched anyway; `backfill` adds up to
     that many of them (most popular first) to this run.
     """
+    changed = sorted(changed_tv_ids) if changed_tv_ids else []
+    stale_before = (today - timedelta(days=cfg.series_refresh_days)).isoformat()
     todo = conn.execute(
         f"""
         SELECT t.id, t.media_type, t.tmdb_id FROM titles t
         WHERE t.details_fetched_at IS NULL
-           OR EXISTS (SELECT 1 FROM availability a
-                      WHERE a.title_id = t.id AND a.removed_at IS NULL AND a.verified IS NULL)
+           OR (EXISTS (SELECT 1 FROM availability a
+                       WHERE a.title_id = t.id AND a.removed_at IS NULL AND a.verified IS NULL)
+               AND (t.details_fetched_at IS NULL OR substr(t.details_fetched_at, 1, 10) < ?))
            OR (t.media_type = 'tv'
                AND COALESCE(t.tv_status, '') NOT IN ({",".join("?" * len(FINISHED_TV_STATUSES))})
                AND substr(t.details_fetched_at, 1, 10) < ?
+               AND (t.tmdb_id IN ({",".join("?" * len(changed)) or "NULL"})
+                    OR substr(t.details_fetched_at, 1, 10) < ?)
                AND EXISTS (SELECT 1 FROM availability a
                            WHERE a.title_id = t.id AND a.removed_at IS NULL))
         ORDER BY t.popularity DESC
         """,
-        (*FINISHED_TV_STATUSES, today.isoformat()),
+        (today.isoformat(), *FINISHED_TV_STATUSES, today.isoformat(), *changed, stale_before),
     ).fetchall()
     if backfill:
         planned = {r["id"] for r in todo}
@@ -243,6 +255,8 @@ def update_details(conn: sqlite3.Connection, client: TMDBClient, cfg: Config, to
     if limit is not None:
         todo = todo[:limit]
     log.info("Details für %d Titel", len(todo))
+    if progress:
+        progress({"phase": "details", "done": 0, "total": len(todo), "label": "Titeldaten"})
 
     # service -> (provider IDs, monetization types that count for it)
     service_offers = {
@@ -263,20 +277,46 @@ def update_details(conn: sqlite3.Connection, client: TMDBClient, cfg: Config, to
             title_id, had_details = catalog.upsert_details(conn, row["media_type"], details)
             catalog.store_offers(conn, title_id, details, cfg.region)
             catalog.store_age_rating(conn, title_id, row["media_type"], details)
+            known_in_region = has_region_offers(details, cfg.region)
             for a in conn.execute(
-                "SELECT service FROM availability WHERE title_id = ? AND removed_at IS NULL",
+                "SELECT service, first_seen FROM availability WHERE title_id = ? AND removed_at IS NULL",
                 (title_id,),
             ).fetchall():
                 providers, monetization = service_offers.get(a["service"], (set(), []))
-                ok = bool(providers & provider_ids_with(details, cfg.region, monetization))
+                ok: int | None = int(bool(providers & provider_ids_with(details, cfg.region, monetization)))
+                if not known_in_region:
+                    # TMDB has no German data at all – unknown, not contradicted. Brand-new
+                    # titles often land here for a day or two; after that we give up on them.
+                    fresh = a["first_seen"] >= (today - timedelta(days=UNVERIFIED_GRACE_DAYS)).isoformat()
+                    ok = None if fresh else 0
                 conn.execute("UPDATE availability SET verified = ? WHERE title_id = ? AND service = ?",
-                             (int(ok), title_id, a["service"]))
+                             (ok, title_id, a["service"]))
             if row["media_type"] == "tv":
                 catalog.update_seasons(conn, title_id, details.get("seasons", []), today,
                                        emit_events=had_details)
+        if progress and (i % 10 == 0 or i == len(todo)):
+            progress({"phase": "details", "done": i, "total": len(todo), "label": "Titeldaten"})
         if i % 250 == 0:
             log.info("  %d/%d", i, len(todo))
     return len(todo)
+
+
+def changed_series(conn: sqlite3.Connection, client: TMDBClient, cfg: Config,
+                    today: date) -> set[int] | None:
+    """Series TMDB changed since our last check (None = could not be determined)."""
+    last = get_setting(conn, "tv_changes_checked_until")
+    # TMDB serves at most 14 days of changes
+    start = max(date.fromisoformat(last) if last else today - timedelta(days=1),
+                today - timedelta(days=13))
+    try:
+        ids = client.changed_ids("tv", start, today)
+    except TMDBError as e:
+        log.warning("Änderungsliste nicht abrufbar (%s) – alle laufenden Serien werden geprüft", e)
+        return None
+    with conn:
+        set_setting(conn, "tv_changes_checked_until", today.isoformat())
+    log.info("TMDB meldet %d geänderte Serien seit %s", len(ids), start)
+    return ids
 
 
 def check_provider_ids(conn: sqlite3.Connection, cfg: Config) -> list[str]:
@@ -290,7 +330,8 @@ def check_provider_ids(conn: sqlite3.Connection, cfg: Config) -> list[str]:
 
 def run(conn: sqlite3.Connection, client: TMDBClient, cfg: Config, *,
         service_keys: list[str] | None = None, fetch_details: bool = True,
-        details_limit: int | None = None, backfill: int = 0, today: date | None = None
+        details_limit: int | None = None, backfill: int = 0, today: date | None = None,
+        progress: Callable[[dict], None] | None = None
         ) -> dict[tuple[str, str], DiffResult | None]:
     today = today or date.today()
     if not cfg.services:
@@ -305,12 +346,20 @@ def run(conn: sqlite3.Connection, client: TMDBClient, cfg: Config, *,
         log.warning(warning)
 
     results = {}
+    total_catalogs = len(services) * len(cfg.media_types)
     for media_type in cfg.media_types:
         genre_names = client.genres(media_type)
         for service in services:
+            if progress:
+                progress({"phase": "catalogs", "done": len(results), "total": total_catalogs,
+                          "label": f"{service.name} – {'Serien' if media_type == 'tv' else 'Filme'}"})
             results[(service.key, media_type)] = snapshot_service(
                 conn, client, cfg, service, media_type, genre_names, today
             )
+    if progress:
+        progress({"phase": "catalogs", "done": total_catalogs, "total": total_catalogs,
+                  "label": "Kataloge"})
     if fetch_details:
-        update_details(conn, client, cfg, today, limit=details_limit, backfill=backfill)
+        update_details(conn, client, cfg, today, limit=details_limit, backfill=backfill,
+                       changed_tv_ids=changed_series(conn, client, cfg, today), progress=progress)
     return results

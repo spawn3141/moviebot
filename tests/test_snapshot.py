@@ -7,7 +7,7 @@ from pathlib import Path
 from moviebot import catalog, db, snapshot
 from moviebot.config import Config, Service
 from moviebot.db import connect, now_iso
-from moviebot.tmdb import MAX_DISCOVER_RESULTS, TMDBClient
+from moviebot.tmdb import MAX_DISCOVER_RESULTS, TMDBClient, TMDBError
 
 D0 = date(2026, 9, 1)
 SERVICES = [Service("prime", "Prime Video", [9, 2100]), Service("wow", "WOW", [30])]
@@ -240,11 +240,12 @@ class DetailsTest(unittest.TestCase):
         self.conn = make_db(self)
         self.cfg = Config(services=SERVICES)
 
-    def add(self, media_type: str, tmdb_id: int, service: str = "prime") -> int:
+    def add(self, media_type: str, tmdb_id: int, service: str = "prime",
+            first_seen: str = "2026-09-01") -> int:
         with self.conn:
             title_id = catalog.upsert_from_discover(self.conn, media_type, {"id": tmdb_id}, {})
             self.conn.execute("INSERT INTO availability (title_id, service, first_seen, last_seen)"
-                              " VALUES (?, ?, '2026-09-01', '2026-09-01')", (title_id, service))
+                              " VALUES (?, ?, ?, ?)", (title_id, service, first_seen, first_seen))
         return title_id
 
     def test_verification_flags_rent_only_titles(self):
@@ -288,7 +289,46 @@ class DetailsTest(unittest.TestCase):
         self.assertEqual(snapshot.update_details(self.conn, FakeClient(), self.cfg, D0,
                                                  backfill=10), 0)
 
-    def test_running_series_refreshed_daily_and_new_season_found(self):
+    def test_missing_german_data_counts_as_unknown_not_as_contradiction(self):
+        today = date.today()
+        self.add("movie", 1, first_seen=today.isoformat())
+
+        class NoDataClient:
+            def details(self, media_type, tmdb_id):
+                d = fake_details(media_type, tmdb_id, [])
+                d["watch/providers"] = {"results": {}}  # TMDB knows nothing for DE yet
+                return d
+
+        snapshot.update_details(self.conn, NoDataClient(), self.cfg, today)
+        verified = self.conn.execute("SELECT verified FROM availability").fetchone()[0]
+        self.assertIsNone(verified)  # unknown: the title stays visible
+
+        # ... but not forever: after the grace period it counts as not available
+        later = today + timedelta(days=snapshot.UNVERIFIED_GRACE_DAYS + 1)
+        snapshot.update_details(self.conn, NoDataClient(), self.cfg, later)
+        self.assertEqual(self.conn.execute("SELECT verified FROM availability").fetchone()[0], 0)
+
+    def test_unverified_titles_are_not_refetched_twice_a_day(self):
+        self.add("movie", 1, first_seen=date.today().isoformat())  # stays "unknown"
+
+        class CountingClient:
+            calls = 0
+
+            def details(self, media_type, tmdb_id):
+                CountingClient.calls += 1
+                d = fake_details(media_type, tmdb_id, [])
+                d["watch/providers"] = {"results": {}}
+                return d
+
+        client = CountingClient()
+        today = date.today()
+        snapshot.update_details(self.conn, client, self.cfg, today)
+        snapshot.update_details(self.conn, client, self.cfg, today)
+        self.assertEqual(client.calls, 1)
+        snapshot.update_details(self.conn, client, self.cfg, today + timedelta(days=1))
+        self.assertEqual(client.calls, 2)
+
+    def test_running_series_refreshed_when_tmdb_reports_a_change(self):
         title_id = self.add("tv", 7, service="wow")
         seasons = [{"season_number": 1, "air_date": "2019-03-01"}]
 
@@ -309,12 +349,69 @@ class DetailsTest(unittest.TestCase):
         # same day: nothing to do
         snapshot.update_details(self.conn, client, self.cfg, date.today())
         self.assertEqual(client.calls, 1)
-        # next day, season 2 has aired
+        # next day, but TMDB reports no change for this series: no request
+        tomorrow = date.today() + timedelta(days=1)
+        snapshot.update_details(self.conn, client, self.cfg, tomorrow, changed_tv_ids={999})
+        self.assertEqual(client.calls, 1)
+        # TMDB reports the change, season 2 has aired
         seasons.append({"season_number": 2, "air_date": date.today().isoformat()})
-        snapshot.update_details(self.conn, client, self.cfg, date.today() + timedelta(days=1))
+        snapshot.update_details(self.conn, client, self.cfg, tomorrow, changed_tv_ids={7})
         self.assertEqual(client.calls, 2)
         events = self.conn.execute("SELECT event, season_number FROM events").fetchall()
         self.assertEqual([tuple(e) for e in events], [("new_season", 2)])
+
+
+    def test_series_are_refreshed_at_least_weekly(self):
+        self.add("tv", 7, service="wow")
+
+        class FakeClient:
+            calls = 0
+
+            def details(self, media_type, tmdb_id):
+                FakeClient.calls += 1
+                return fake_details(media_type, tmdb_id, [30], [{"season_number": 1, "air_date": "2019-03-01"}])
+
+        client = FakeClient()
+        snapshot.update_details(self.conn, client, self.cfg, date.today())
+        # without a reported change nothing happens for days ...
+        snapshot.update_details(self.conn, client, self.cfg, date.today() + timedelta(days=3),
+                                changed_tv_ids=set())
+        self.assertEqual(client.calls, 1)
+        # ... until the safety net kicks in
+        snapshot.update_details(self.conn, client, self.cfg,
+                                date.today() + timedelta(days=self.cfg.series_refresh_days + 1),
+                                changed_tv_ids=set())
+        self.assertEqual(client.calls, 2)
+
+
+class ChangedSeriesTest(unittest.TestCase):
+    def setUp(self):
+        self.conn = make_db(self)
+        self.cfg = Config(services=SERVICES)
+
+    def test_asks_tmdb_only_for_the_days_since_the_last_check(self):
+        asked = []
+
+        class FakeClient:
+            def changed_ids(self, media_type, start, end, max_pages=60):
+                asked.append((media_type, start, end))
+                return {1, 2}
+
+        today = date(2026, 9, 20)
+        self.assertEqual(snapshot.changed_series(self.conn, FakeClient(), self.cfg, today), {1, 2})
+        self.assertEqual(asked[-1], ("tv", date(2026, 9, 19), today))  # first run: yesterday
+        snapshot.changed_series(self.conn, FakeClient(), self.cfg, date(2026, 9, 25))
+        self.assertEqual(asked[-1][1], today)  # continues where it stopped
+        # after a long pause TMDB only serves 14 days
+        snapshot.changed_series(self.conn, FakeClient(), self.cfg, date(2026, 12, 1))
+        self.assertEqual(asked[-1][1], date(2026, 11, 18))
+
+    def test_falls_back_to_checking_every_series(self):
+        class BrokenClient:
+            def changed_ids(self, *args, **kwargs):
+                raise TMDBError("kaputt")
+
+        self.assertIsNone(snapshot.changed_series(self.conn, BrokenClient(), self.cfg, date.today()))
 
 
 class SubscriptionTest(unittest.TestCase):

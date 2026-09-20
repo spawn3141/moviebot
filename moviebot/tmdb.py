@@ -142,6 +142,20 @@ class TMDBClient:
              "append_to_response": f"keywords,credits,watch/providers,external_ids,{ratings}"},
         )
 
+    def changed_ids(self, media_type: str, start: date, end: date, max_pages: int = 60) -> set[int]:
+        """IDs TMDB changed in that period (all of TMDB, not just our catalog)."""
+        params = {"start_date": start.isoformat(), "end_date": end.isoformat()}
+        first = self.get(f"/{media_type}/changes", {**params, "page": 1})
+        ids = {x["id"] for x in first.get("results", [])}
+        pages = min(first.get("total_pages", 1), max_pages)
+        if first.get("total_pages", 1) > max_pages:
+            log.warning("%s/changes hat %d Seiten, es werden nur %d geladen",
+                        media_type, first["total_pages"], max_pages)
+        for page in range(2, pages + 1):
+            ids |= {x["id"] for x in self.get(f"/{media_type}/changes", {**params, "page": page})
+                    .get("results", [])}
+        return ids
+
     def discover_catalog(self, media_type: str, provider_ids: list[int],
                          monetization: list[str], min_year: int) -> dict[int, dict]:
         """Complete current catalog of one service as {tmdb_id: discover item}."""
@@ -194,6 +208,12 @@ class TMDBClient:
             self._discover_range(media_type, base, mid + timedelta(days=1), end, results)
         else:
             self._collect_pages(media_type, params, first, results)
+
+
+def has_region_offers(details: dict, region: str) -> bool:
+    """Does TMDB know any offer for this title in the region? Brand-new titles often not yet."""
+    region_data = details.get("watch/providers", {}).get("results", {}).get(region, {})
+    return any(isinstance(v, list) and v for v in region_data.values())
 
 
 def provider_ids_with(details: dict, region: str, monetization: list[str]) -> set[int]:

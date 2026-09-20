@@ -35,7 +35,6 @@ export const api = {
   titles: (params) => request('GET', '/api/titles', { params }),
   title: (id) => request('GET', `/api/titles/${id}`),
   setState: (id, body) => request('PUT', `/api/titles/${id}/state`, { body }),
-  newEvents: (params) => request('GET', '/api/new', { params }),
   genres: (params) => request('GET', '/api/genres', { params }),
   services: () => request('GET', '/api/services'),
   setSubscribed: (key, subscribed) => request('PUT', `/api/services/${key}`, { body: { subscribed } }),

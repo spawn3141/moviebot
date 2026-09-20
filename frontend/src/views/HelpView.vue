@@ -15,8 +15,9 @@ const SORTS = [
     'Start der neuesten Staffel, sodass eine lang laufende Serie mit frischer Staffel weit oben ' +
     'steht. In den Einstellungen kannst du stattdessen den Start der Serie wählen. Sortiert wird ' +
     'taggenau, angezeigt wird nur das Jahr – das volle Datum steht in der Detailansicht.'],
-  ['Zuletzt dazugekommen', 'Der Tag, an dem wir den Titel im jeweiligen Dienst entdeckt haben. ' +
-    'Titel aus dem allerersten Abgleich zählen dabei als gleich alt.'],
+  ['Zuletzt dazugekommen', 'Der Tag, an dem wir den Titel im jeweiligen Dienst entdeckt haben ' +
+    'oder eine neue Staffel bemerkt haben – je nachdem, was neuer ist. Titel aus dem allerersten ' +
+    'Abgleich zählen als gleich alt; bei gleichem Tag entscheidet die Beliebtheit.'],
   ['Titel A–Z', 'Alphabetisch nach dem deutschen Titel.'],
 ]
 
@@ -52,7 +53,10 @@ onMounted(async () => {
         <dt>Neu: 7 / 14 / 30 Tage</dt>
         <dd>
           Zeigt, was in diesem Zeitraum in einem Dienst dazugekommen ist oder eine neue Staffel
-          bekommen hat. Grundlage ist der tägliche Abgleich, nicht der offizielle Starttermin.
+          bekommen hat. Auf den Kacheln steht dann, warum: „Neu bei WOW“ oder „Staffel 3“.
+          Grundlage ist der tägliche Abgleich, nicht der offizielle Starttermin. Zusammen mit der
+          Sortierung „Zuletzt dazugekommen“ ist das der gespeicherte Filter <strong>Neu</strong>,
+          den du beim ersten Start vorfindest – er lässt sich ändern oder löschen wie jeder andere.
         </dd>
         <dt>Altersfreigabe</dt>
         <dd>

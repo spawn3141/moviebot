@@ -6,7 +6,7 @@ import StarRating from './StarRating.vue'
 
 const props = defineProps({
   item: { type: Object, required: true },
-  badge: { type: String, default: '' },
+  badge: { type: String, default: '' },  // e.g. "nicht verfügbar" inside a list
   // inside a list view the bookmark toggles that list instead of the default one
   listId: { type: Number, default: null },
 })
@@ -14,6 +14,13 @@ const props = defineProps({
 const state = computed(() => currentState(props.item))
 const services = computed(() => props.item.available_on.map((a) => a.name).join(' · '))
 const age = computed(() => ageLabel(props.item))
+/** "Neu bei WOW" / "Staffel 3" – only present when filtering for new titles */
+const recentBadge = computed(() => {
+  const r = props.item.recent
+  if (!r) return ''
+  if (r.event === 'new_season') return `Staffel ${r.season_number}`
+  return `${r.event === 'readded' ? 'Wieder bei' : 'Neu bei'} ${r.service ?? ''}`.trim()
+})
 const onList = computed(() => (props.listId
   ? currentLists(props.item).includes(props.listId)
   : currentLists(props.item).length > 0))
@@ -31,7 +38,7 @@ function toggle(status) {
       <div v-else class="poster-fallback">{{ item.title }}</div>
       <span class="kind">{{ item.media_type === 'tv' ? 'Serie' : 'Film' }}</span>
       <span v-if="item.vote_average" class="score">★ {{ item.vote_average.toFixed(1) }}</span>
-      <span v-if="badge" class="badge">{{ badge }}</span>
+      <span v-if="badge || recentBadge" class="badge">{{ badge || recentBadge }}</span>
       <span v-if="age" class="age" :title="age.long">{{ age.short }}</span>
     </div>
     <div class="card-body">
