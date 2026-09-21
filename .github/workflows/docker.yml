@@ -1,11 +1,12 @@
-# Baut das Docker-Image und legt es in der GitHub Container Registry (ghcr.io) ab.
-# Unraid zieht es von dort – auf dem Server muss nichts gebaut werden.
+# Tests laufen bei jedem Push. Das Image wird NICHT automatisch gebaut – das löst du selbst
+# aus: Knopf "Run workflow" im Actions-Reiter oder `gh workflow run docker.yml`. Es landet dann
+# in der GitHub Container Registry (ghcr.io), von wo Unraid es zieht.
 name: Docker-Image
 
 on:
   push:
     branches: [main]
-    tags: ["v*"]
+    tags: ["v*"]          # ein Versions-Tag baut auch – das ist ebenfalls deine Entscheidung
   pull_request:
     branches: [main]
   workflow_dispatch:      # Knopf "Run workflow" im Actions-Reiter
@@ -24,6 +25,9 @@ jobs:
 
   image:
     name: Image bauen und hochladen
+    # Nur auf Zuruf: Knopf im Actions-Reiter oder ein Versions-Tag. Ein gewöhnlicher Push
+    # auf main lässt nur die Tests laufen und fasst das Image nicht an.
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     needs: tests                          # kein Image, wenn die Tests rot sind
     runs-on: ubuntu-latest
     permissions:
@@ -35,7 +39,6 @@ jobs:
       - uses: docker/setup-buildx-action@v3
 
       - name: Bei ghcr.io anmelden
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -57,7 +60,7 @@ jobs:
         with:
           context: .
           platforms: linux/amd64            # Unraid ist x86_64
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
