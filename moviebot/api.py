@@ -88,6 +88,8 @@ class Season(BaseModel):
     name: str | None
     air_date: str | None
     episode_count: int | None
+    released: bool = Field(description="false = noch nicht ausgestrahlt, nicht markierbar")
+    seen: bool = Field(description="als gesehen markiert")
 
 
 class Offer(BaseModel):
@@ -137,6 +139,25 @@ class StateUpdate(BaseModel):
     rating: int | None = Field(default=None, ge=1, le=5,
                                description="1–5, null löscht die Bewertung. Setzt 'seen', "
                                            "wenn kein Status mitgeschickt wird.")
+    seasons: list[int] | None = Field(default=None,
+                                      description="Nur Serien: genau diese Staffeln als gesehen "
+                                                  "setzen. Für „Rückgängig“ – dafür den Wert aus "
+                                                  "'seasons_before' zurückschicken.")
+
+
+class StateResult(UserState):
+    seasons_before: list[int] = Field(default_factory=list,
+                                      description="Nur Serien: die Staffeln, die vor dieser "
+                                                  "Änderung als gesehen markiert waren")
+
+
+class SeasonUpdate(BaseModel):
+    seen: bool
+
+
+class SeasonState(BaseModel):
+    user: UserState = Field(description="Status der Serie, der den Staffeln folgt")
+    seasons: list[Season]
 
 
 class TitleList(BaseModel):
@@ -363,16 +384,30 @@ def create_app(cfg: Config, scheduler: SnapshotScheduler | None = None,
             raise HTTPException(status_code=404, detail="Titel nicht gefunden")
         return result
 
-    @app.put("/api/titles/{title_id}/state", response_model=UserState, tags=["Titel"],
+    @app.put("/api/titles/{title_id}/state", response_model=StateResult, tags=["Titel"],
              summary="Gesehen / Bewertung / nicht interessiert setzen")
     def update_state(conn: Conn, title_id: int, body: StateUpdate):
         changes = body.model_dump(include=body.model_fields_set)
         if "status" in changes and changes["status"] is None:
             raise HTTPException(status_code=422, detail="status darf nicht null sein")
+        if changes.get("seasons", ()) is None:
+            del changes["seasons"]  # weggelassen und ausdrücklich null sind dasselbe
         try:
             return queries.set_user_state(conn, title_id, changes)
         except LookupError:
             raise HTTPException(status_code=404, detail="Titel nicht gefunden")
+
+    @app.put("/api/titles/{title_id}/seasons/{season_number}", response_model=SeasonState,
+             tags=["Titel"], summary="Einzelne Staffel einer Serie als gesehen markieren")
+    def update_season_state(conn: Conn, title_id: int, season_number: int, body: SeasonUpdate):
+        """Die Serie gilt als gesehen, sobald jede erschienene Staffel markiert ist – und
+        wieder als ungesehen, sobald eine neue dazukommt."""
+        try:
+            return queries.set_season_seen(conn, title_id, season_number, body.seen)
+        except LookupError:
+            raise HTTPException(status_code=404, detail="Staffel nicht gefunden")
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
 
     @app.put("/api/titles/{title_id}/lists", response_model=list[int], tags=["Listen"],
              summary="Listen eines Titels setzen")

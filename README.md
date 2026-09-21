@@ -101,6 +101,10 @@ docker exec -it moviebot python -m moviebot providers --search wow
 - **Titel hinzufügen** (Einstellungen): Suche bei TMDB, um ältere Titel außerhalb von `min_year`
   einzeln aufzunehmen – zum Bewerten oder um zu erfahren, wenn sie in einem Dienst auftauchen.
   Ihre Verfügbarkeit wird aus den eigenen Angeboten des Titels abgeleitet und täglich aufgefrischt.
+- **Staffeln einzeln abhaken** (Detailansicht einer Serie): ✓-Knopf neben jeder erschienenen
+  Staffel, derselbe wie auf der Kachel. Die Serie gilt als gesehen, sobald alle erschienenen Staffeln markiert sind, und
+  wieder als ungesehen, sobald eine neue erscheint – so taucht sie von selbst wieder auf,
+  wenn es weitergeht. Das ✓ auf der Kachel hakt alle erschienenen Staffeln auf einmal ab.
 - **Listen**: Sammlungen von Titeln (☆ auf der Kachel = Standardliste, Detailansicht/Picker für
   mehrere Listen); anlegen, umbenennen, löschen, Standard festlegen. Titel dürfen auf 0..n Listen
   stehen und bleiben auch dann in der Liste, wenn sie in keinem Dienst mehr laufen.
@@ -119,6 +123,7 @@ parallel `cd frontend && npm run dev` → http://localhost:5173 (lädt Änderung
 | `GET /api/titles` | filtern (Dienst, Film/Serie, Genre, Jahr, Suche, neu in N Tagen) und sortieren |
 | `GET /api/titles/{id}` | alle Infos inkl. Staffeln und Angeboten |
 | `PUT /api/titles/{id}/state` | gesehen / Bewertung 1–5 / nicht interessiert |
+| `PUT /api/titles/{id}/seasons/{n}` | einzelne Staffel einer Serie als gesehen markieren |
 | `GET/PUT /api/services` | Dienste, Abos an/aus |
 | `GET/PUT /api/settings` | kostenlose Angebote einbeziehen |
 | `GET/POST /api/lists`, `PATCH/DELETE /api/lists/{id}` | Listen verwalten |
@@ -163,5 +168,12 @@ der Stimmen, damit 9,5 bei 3 Stimmen nicht vor 7,8 bei 5000 Stimmen landet.
 - **Listen und Filter sind getrennt**: `lists` + `list_items` enthalten Titel, `saved_filters`
   nur gespeicherte Suchen (`filter_id` in `GET /api/titles` wendet einen an). Ein gespeicherter
   Filter gewinnt gegenüber gleichnamigen Parametern; andere Parameter schränken zusätzlich ein.
+- **Gesehene Staffeln** (`season_state`) sind Benutzerdaten und stehen deshalb neben `seasons`,
+  das bei jedem Abruf aus TMDB überschrieben wird. Zeile vorhanden = gesehen. Der Status der
+  Serie folgt daraus: gesehen, wenn jede erschienene Staffel markiert ist. Eine Bewertung
+  überlebt den automatischen Rückfall auf „ungesehen“; nur ein Klick von Hand löscht sie.
+  `PUT /api/titles/{id}/state` liefert in `seasons_before` die Haken von vor der Änderung und
+  nimmt sie als `seasons` wieder entgegen – damit „Rückgängig“ auch einzeln gesetzte Haken
+  zurückholt, die das titelweite „ungesehen“ sonst mitlöschen würde.
 - **Migrationen**: Schemaänderungen werden beim Start automatisch angewendet; vorher wird eine
   Sicherung `moviebot.db.bak-v<alte Version>` angelegt.

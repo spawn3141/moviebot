@@ -20,6 +20,11 @@ WEIGHTED_RATING_SQL = (
     f"{RATING_PRIOR_VOTES} * {RATING_PRIOR_MEAN}) / (COALESCE(t.vote_count, 0) + {RATING_PRIOR_VOTES}))"
 )
 
+# A season counts as released once its air date has passed – the same rule the web UI uses.
+# Deliberately not `released_at`: that is snapshot bookkeeping and may be empty for seasons
+# stored by another path, which would silently make them unmarkable.
+RELEASED_SEASON_SQL = "s.air_date IS NOT NULL AND s.air_date <= date('now', 'localtime')"
+
 # "Neueste zuerst": for series either the start of the newest released season (default) or,
 # like movies, the first release.
 # for the "added" sorting: the day we noticed a new season
@@ -421,12 +426,7 @@ def get_title(conn: sqlite3.Connection, title_id: int) -> dict | None:
             (title_id,),
         )
     ]
-    seasons = [
-        {"season_number": s["season_number"], "name": s["name"], "air_date": s["air_date"],
-         "episode_count": s["episode_count"]}
-        for s in conn.execute(
-            "SELECT * FROM seasons WHERE title_id = ? ORDER BY season_number", (title_id,))
-    ]
+    seasons = _seasons_for(conn, title_id)
     result.update({
         "tmdb_id": row["tmdb_id"],
         "release_date": row["release_date"],
@@ -448,11 +448,132 @@ def get_title(conn: sqlite3.Connection, title_id: int) -> dict | None:
     return result
 
 
+def _seasons_for(conn: sqlite3.Connection, title_id: int) -> list[dict]:
+    """Seasons of a series with the user's own marks. `released` says whether the season can
+    be marked at all – what has not aired yet is nothing anybody has seen."""
+    return [
+        {"season_number": s["season_number"], "name": s["name"], "air_date": s["air_date"],
+         "episode_count": s["episode_count"], "released": bool(s["released"]),
+         "seen": s["seen_at"] is not None}
+        for s in conn.execute(
+            f"""SELECT s.*, ss.seen_at, ({RELEASED_SEASON_SQL}) AS released FROM seasons s
+               LEFT JOIN season_state ss ON ss.title_id = s.title_id
+                                        AND ss.season_number = s.season_number
+               WHERE s.title_id = ? ORDER BY s.season_number""",
+            (title_id,),
+        )
+    ]
+
+
+def sync_series_status(conn: sqlite3.Connection, title_id: int) -> str:
+    """Keep "gesehen" of a series in step with its season marks: seen exactly when every
+    released season is marked.
+
+    Called after a mark changes and after the snapshot releases a new season – the latter is
+    what brings a finished series back into "Entdecken" once it continues. A rating survives
+    that automatic flip; only marking a title unseen by hand clears it. 'not_interested' is a
+    decision of its own and is never overruled here.
+    """
+    row = conn.execute("SELECT status FROM user_state WHERE title_id = ?", (title_id,)).fetchone()
+    current = row["status"] if row else "unseen"
+    if current == "not_interested":
+        return current
+    counts = conn.execute(
+        f"""SELECT COUNT(*) AS released, COUNT(ss.season_number) AS seen
+            FROM seasons s
+            LEFT JOIN season_state ss ON ss.title_id = s.title_id
+                                     AND ss.season_number = s.season_number
+            WHERE s.title_id = ? AND {RELEASED_SEASON_SQL}""",
+        (title_id,),
+    ).fetchone()
+    status = "seen" if counts["released"] and counts["released"] == counts["seen"] else "unseen"
+    if status == current:
+        return current  # nothing to write, so untouched series never get a user_state row
+    conn.execute(
+        """INSERT INTO user_state (title_id, status, updated_at) VALUES (?, ?, ?)
+           ON CONFLICT (title_id) DO UPDATE SET status = excluded.status,
+               updated_at = excluded.updated_at""",
+        (title_id, status, now_iso()),
+    )
+    return status
+
+
+def _apply_status_to_seasons(conn: sqlite3.Connection, title_id: int, status: str) -> None:
+    """The title-wide button stays usable: "gesehen" ticks every released season, "ungesehen"
+    clears them all."""
+    if status == "seen":
+        conn.execute(
+            f"""INSERT INTO season_state (title_id, season_number, seen_at)
+                SELECT s.title_id, s.season_number, ? FROM seasons s
+                WHERE s.title_id = ? AND {RELEASED_SEASON_SQL}
+                ON CONFLICT (title_id, season_number) DO NOTHING""",
+            (now_iso(), title_id),
+        )
+    elif status == "unseen":
+        conn.execute("DELETE FROM season_state WHERE title_id = ?", (title_id,))
+
+
+def _seen_seasons(conn: sqlite3.Connection, title_id: int) -> list[int]:
+    return [r[0] for r in conn.execute(
+        "SELECT season_number FROM season_state WHERE title_id = ? ORDER BY season_number",
+        (title_id,))]
+
+
+def _restore_seasons(conn: sqlite3.Connection, title_id: int, numbers: list[int]) -> None:
+    """Put the marks back exactly as they were – what "Rückgängig" needs, because the
+    title-wide "ungesehen" clears marks the user had set season by season."""
+    conn.execute("DELETE FROM season_state WHERE title_id = ?", (title_id,))
+    conn.executemany(
+        f"""INSERT INTO season_state (title_id, season_number, seen_at)
+            SELECT s.title_id, s.season_number, ? FROM seasons s
+            WHERE s.title_id = ? AND s.season_number = ? AND {RELEASED_SEASON_SQL}""",
+        [(now_iso(), title_id, int(n)) for n in numbers],
+    )
+
+
+def set_season_seen(conn: sqlite3.Connection, title_id: int, season_number: int,
+                    seen: bool) -> dict:
+    """Mark one season of a series as seen or not, and pull the series' status along."""
+    row = conn.execute(
+        f"SELECT ({RELEASED_SEASON_SQL}) AS released FROM seasons s "
+        "WHERE s.title_id = ? AND s.season_number = ?",
+        (title_id, season_number),
+    ).fetchone()
+    if row is None:
+        raise LookupError((title_id, season_number))
+    if not row["released"]:
+        raise ValueError(f"Staffel {season_number} ist noch nicht erschienen")
+    with conn:
+        if seen:
+            conn.execute(
+                """INSERT INTO season_state (title_id, season_number, seen_at) VALUES (?, ?, ?)
+                   ON CONFLICT (title_id, season_number) DO NOTHING""",
+                (title_id, season_number, now_iso()),
+            )
+        else:
+            conn.execute("DELETE FROM season_state WHERE title_id = ? AND season_number = ?",
+                         (title_id, season_number))
+        sync_series_status(conn, title_id)
+    state = conn.execute("SELECT status, rating FROM user_state WHERE title_id = ?",
+                         (title_id,)).fetchone()
+    return {
+        "user": {"status": state["status"] if state else "unseen",
+                 "rating": state["rating"] if state else None},
+        "seasons": _seasons_for(conn, title_id),
+    }
+
+
 def set_user_state(conn: sqlite3.Connection, title_id: int, changes: dict) -> dict:
-    """`changes` may contain 'status' and/or 'rating'. A rating implies 'seen';
-    marking a title unseen clears its rating."""
-    if conn.execute("SELECT 1 FROM titles WHERE id = ?", (title_id,)).fetchone() is None:
+    """`changes` may contain 'status', 'rating' and – for series – 'seasons': the exact set of
+    seen seasons to restore, which is how "Rückgängig" puts back marks that a title-wide
+    "ungesehen" would otherwise drop. A rating implies 'seen'; marking a title unseen clears
+    its rating. The answer carries the marks from *before* the change, so the caller can undo.
+    """
+    title = conn.execute("SELECT media_type FROM titles WHERE id = ?", (title_id,)).fetchone()
+    if title is None:
         raise LookupError(title_id)
+    is_series = title["media_type"] == "tv"
+    seasons_before = _seen_seasons(conn, title_id) if is_series else []
     current = conn.execute("SELECT status, rating FROM user_state WHERE title_id = ?",
                            (title_id,)).fetchone()
     status = current["status"] if current else "unseen"
@@ -472,7 +593,17 @@ def set_user_state(conn: sqlite3.Connection, title_id: int, changes: dict) -> di
                    rating = excluded.rating, updated_at = excluded.updated_at""",
             (title_id, status, rating, now_iso()),
         )
-    return {"status": status, "rating": rating}
+        if is_series:
+            # Only an explicit "ungesehen" wipes the marks – clearing a rating must not.
+            # A rating implies "gesehen", so the seasons follow that too.
+            if "seasons" in changes:
+                _restore_seasons(conn, title_id, changes["seasons"])
+                status = sync_series_status(conn, title_id)  # the marks decide again
+            elif changes.get("status") == "unseen":
+                _apply_status_to_seasons(conn, title_id, "unseen")
+            elif status == "seen":
+                _apply_status_to_seasons(conn, title_id, "seen")
+    return {"status": status, "rating": rating, "seasons_before": seasons_before}
 
 
 def list_genres(conn: sqlite3.Connection, media_type: str | None = None) -> list[dict]:
@@ -589,7 +720,8 @@ def delete_list(conn: sqlite3.Connection, list_id: int) -> None:
 
 def set_title_lists(conn: sqlite3.Connection, title_id: int, list_ids: list[int]) -> list[int]:
     """Replace the list membership of one title. Returns the list ids it is on now."""
-    if conn.execute("SELECT 1 FROM titles WHERE id = ?", (title_id,)).fetchone() is None:
+    title = conn.execute("SELECT media_type FROM titles WHERE id = ?", (title_id,)).fetchone()
+    if title is None:
         raise LookupError(title_id)
     known = {r[0] for r in conn.execute("SELECT id FROM lists")}
     unknown = [i for i in list_ids if i not in known]

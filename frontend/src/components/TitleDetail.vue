@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { api } from '../api'
 import { MONETIZATION, TV_STATUS, ageLabel, durationLabel, formatDate } from '../format'
-import { currentLists, currentState, lists, loadLists, setTitleLists, showToast, ui, updateUserState } from '../store'
+import { currentLists, currentState, lists, loadLists, setSeasonSeen, setTitleLists, showToast, ui, updateUserState, userState } from '../store'
 import StarRating from './StarRating.vue'
 
 const props = defineProps({ id: { type: Number, required: true } })
@@ -27,10 +27,34 @@ const state = computed(() => (title.value ? currentState(title.value) : null))
 
 // newest season that has already started
 const latestSeason = computed(() => {
-  const today = new Date().toISOString().slice(0, 10)
-  const released = (title.value?.seasons ?? []).filter((s) => s.air_date && s.air_date <= today)
+  const released = (title.value?.seasons ?? []).filter((s) => s.released)
   return released.length ? released[released.length - 1] : null
 })
+
+const releasedSeasons = computed(() => (title.value?.seasons ?? []).filter((s) => s.released))
+// aired, but not ticked off yet
+const openSeasons = computed(() => releasedSeasons.value.filter((s) => !s.seen).length)
+
+async function toggleSeason(season) {
+  // the answer already carries the new list, so the button flips without a second request
+  const seasons = await setSeasonSeen(title.value, season.season_number, !season.seen)
+  if (seasons) title.value.seasons = seasons
+}
+
+async function refreshSeasons() {
+  if (title.value?.media_type !== 'tv') return
+  try {
+    title.value.seasons = (await api.title(props.id)).seasons
+  } catch {
+    // keep what is on screen; the next open shows the truth
+  }
+}
+
+// "Gesehen", a rating and "Rückgängig" all tick or clear seasons on the server, and each of
+// them moves the title's status – so watch the status and fetch the marks again. Watching the
+// status (not the whole object) also keeps a single season click from fetching twice: ticking
+// one of four leaves the status alone.
+watch(() => userState[props.id]?.status, refreshSeasons)
 
 // Offers grouped by kind, e.g. { "Leihen": ["Apple TV", "Amazon Video"] }
 const offerGroups = computed(() => {
@@ -181,11 +205,30 @@ onBeforeUnmount(() => {
           <h3>Staffeln</h3>
           <ul class="seasons">
             <li v-for="s in title.seasons" :key="s.season_number">
-              <strong>{{ s.name || `Staffel ${s.season_number}` }}</strong>
+              <span class="season-name">
+                <button v-if="s.released" type="button" class="seen-toggle" :class="{ on: s.seen }"
+                        :aria-pressed="s.seen"
+                        :title="s.seen ? 'Doch nicht gesehen' : 'Als gesehen markieren'"
+                        @click="toggleSeason(s)">✓</button>
+                <span v-else class="seen-spacer" aria-hidden="true"></span>
+                <strong :class="{ upcoming: !s.released }">
+                  {{ s.name || `Staffel ${s.season_number}` }}
+                </strong>
+              </span>
               <span>{{ s.episode_count ? `${s.episode_count} Folgen` : '' }}</span>
               <span>{{ s.air_date ? formatDate(s.air_date) : 'Termin offen' }}</span>
             </li>
           </ul>
+          <p class="hint">
+            <template v-if="!releasedSeasons.length">Noch keine Staffel erschienen.</template>
+            <template v-else-if="openSeasons">
+              Noch offen: {{ openSeasons }} {{ openSeasons === 1 ? 'Staffel' : 'Staffeln' }}.
+            </template>
+            <template v-else>
+              Alle erschienenen Staffeln gesehen – kommt eine neue dazu, gilt die Serie
+              wieder als offen.
+            </template>
+          </p>
           <p v-if="title.next_episode_date" class="hint">
             Nächste Folge: {{ formatDate(title.next_episode_date) }}
           </p>
@@ -258,6 +301,17 @@ h3 { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: 
 .seasons { list-style: none; padding: 0; margin: 0; display: grid; gap: 4px; }
 .seasons li { display: grid; grid-template-columns: 1fr auto auto; gap: 12px; font-size: .9rem; padding: 6px 0; border-bottom: 1px solid var(--border); }
 .seasons span { color: var(--muted); }
+.season-name { display: flex; align-items: center; gap: 10px; }
+/* same button as "gesehen" on the card, so the sign means the same thing everywhere */
+.seen-toggle {
+  background: var(--panel-2); border: 1px solid var(--border); color: var(--muted);
+  width: 28px; height: 28px; border-radius: 8px; cursor: pointer; font-size: .85rem;
+  padding: 0; flex: none;
+}
+.seen-toggle:hover { color: var(--text); border-color: var(--border-strong); }
+.seen-toggle.on { background: var(--accent-2); border-color: var(--accent-2); color: #fff; }
+.seen-spacer { width: 28px; flex: none; }
+.upcoming { color: var(--muted); }
 .offers { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; font-size: .9rem; }
 .offers dt { color: var(--muted); }
 .offers dd { margin: 0; }

@@ -102,6 +102,14 @@ onMounted(async () => {
         Liste; über „Rückgängig“ unten am Bildschirm holst du sie zurück. Gesehene kannst du
         über den Filter wieder einblenden.
       </p>
+      <p>
+        <strong>Bei Serien geht es auch staffelweise.</strong> In der Detailansicht steht neben
+        jeder erschienenen Staffel derselbe ✓-Knopf wie auf der Kachel. Die Serie gilt als gesehen, sobald alle
+        erschienenen Staffeln abgehakt sind – und automatisch wieder als offen, sobald eine
+        neue dazukommt. So meldet sich eine Serie von selbst zurück, wenn es weitergeht,
+        statt für immer ausgeblendet zu bleiben. Das ✓ auf der Kachel hakt weiterhin alles
+        auf einmal ab.
+      </p>
       <p class="muted">
         Deine Bewertungen sind die Grundlage für die geplante Sortierung „Passt zu mir“.
       </p>

@@ -165,3 +165,14 @@ CREATE TABLE IF NOT EXISTS user_state (
     rating     INTEGER CHECK (rating BETWEEN 1 AND 5),
     updated_at TEXT NOT NULL
 );
+
+-- Seen seasons of a series. User state, therefore separate from `seasons`, which is TMDB
+-- data and rewritten on every detail fetch. A row means "seen"; no row means "not seen".
+-- Deliberately no foreign key on seasons: a season TMDB stops reporting for a while must
+-- not take the mark with it.
+CREATE TABLE IF NOT EXISTS season_state (
+    title_id      INTEGER NOT NULL REFERENCES titles(id),
+    season_number INTEGER NOT NULL,
+    seen_at       TEXT NOT NULL,
+    PRIMARY KEY (title_id, season_number)
+);

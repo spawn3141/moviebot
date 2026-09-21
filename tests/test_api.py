@@ -165,11 +165,12 @@ class ApiTest(unittest.TestCase):
     def test_rating_marks_seen_and_hides_title(self):
         tid = self.ids["action"]
         r = self.client.put(f"/api/titles/{tid}/state", json={"rating": 4})
-        self.assertEqual(r.json(), {"status": "seen", "rating": 4})
+        # seasons_before ist bei Filmen immer leer
+        self.assertEqual(r.json(), {"status": "seen", "rating": 4, "seasons_before": []})
         self.assertNotIn("Action A", self.titles())
         self.assertIn("Action A", self.titles(show_seen=True))
         r = self.client.put(f"/api/titles/{tid}/state", json={"status": "unseen"})
-        self.assertEqual(r.json(), {"status": "unseen", "rating": None})
+        self.assertEqual(r.json(), {"status": "unseen", "rating": None, "seasons_before": []})
         r = self.client.put(f"/api/titles/{tid}/state", json={"rating": 9})
         self.assertEqual(r.status_code, 422)
         self.assertEqual(self.client.put("/api/titles/99999/state", json={"status": "seen"}).status_code, 404)
@@ -389,6 +390,93 @@ class ApiTest(unittest.TestCase):
         self.assertNotIn("Matrix", self.titles(q="Matrix"))
         self.assertEqual(self.client.delete(f"/api/titles/{title['id']}/import").status_code, 400)
         self.assertEqual(self.client.delete("/api/titles/99999/import").status_code, 404)
+
+    def test_seasons_are_marked_one_by_one(self):
+        sid = self.ids["series"]
+        seasons = self.client.get(f"/api/titles/{sid}").json()["seasons"]
+        self.assertEqual([(s["season_number"], s["released"], s["seen"]) for s in seasons],
+                         [(1, True, False), (2, True, False), (3, False, False)])
+
+        r = self.client.put(f"/api/titles/{sid}/seasons/1", json={"seen": True})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["user"]["status"], "unseen")  # Staffel 2 fehlt noch
+
+        r = self.client.put(f"/api/titles/{sid}/seasons/2", json={"seen": True})
+        self.assertEqual(r.json()["user"]["status"], "seen")    # alle erschienenen gesehen
+        self.assertEqual([s["seen"] for s in r.json()["seasons"]], [True, True, False])
+
+        r = self.client.put(f"/api/titles/{sid}/seasons/2", json={"seen": False})
+        self.assertEqual(r.json()["user"]["status"], "unseen")
+
+    def test_unaired_season_cannot_be_marked(self):
+        sid = self.ids["series"]
+        self.assertEqual(self.client.put(f"/api/titles/{sid}/seasons/3",
+                                         json={"seen": True}).status_code, 422)
+        self.assertEqual(self.client.put(f"/api/titles/{sid}/seasons/9",
+                                         json={"seen": True}).status_code, 404)
+
+    def test_seen_button_ticks_all_aired_seasons(self):
+        sid = self.ids["series"]
+        self.client.put(f"/api/titles/{sid}/state", json={"status": "seen"})
+        seen = [s["seen"] for s in self.client.get(f"/api/titles/{sid}").json()["seasons"]]
+        self.assertEqual(seen, [True, True, False])  # Staffel 3 läuft noch nicht
+
+        self.client.put(f"/api/titles/{sid}/state", json={"status": "unseen"})
+        seen = [s["seen"] for s in self.client.get(f"/api/titles/{sid}").json()["seasons"]]
+        self.assertEqual(seen, [False, False, False])
+
+    def test_rating_a_series_ticks_its_seasons_but_clearing_it_does_not_wipe_them(self):
+        sid = self.ids["series"]
+        self.client.put(f"/api/titles/{sid}/state", json={"rating": 4})
+        seen = [s["seen"] for s in self.client.get(f"/api/titles/{sid}").json()["seasons"]]
+        self.assertEqual(seen, [True, True, False])
+
+        self.client.put(f"/api/titles/{sid}/seasons/2", json={"seen": False})
+        self.client.put(f"/api/titles/{sid}/state", json={"rating": None})  # Sternchen löschen
+        seen = [s["seen"] for s in self.client.get(f"/api/titles/{sid}").json()["seasons"]]
+        self.assertEqual(seen, [True, False, False])  # Haken auf Staffel 1 bleibt
+
+    def test_not_interested_is_never_overruled_by_season_marks(self):
+        sid = self.ids["series"]
+        self.client.put(f"/api/titles/{sid}/seasons/1", json={"seen": True})
+        self.client.put(f"/api/titles/{sid}/state", json={"status": "not_interested"})
+        seen = [s["seen"] for s in self.client.get(f"/api/titles/{sid}").json()["seasons"]]
+        self.assertEqual(seen, [True, False, False])  # Haken bleiben erhalten
+
+        r = self.client.put(f"/api/titles/{sid}/seasons/2", json={"seen": True})
+        self.assertEqual(r.json()["user"]["status"], "not_interested")
+
+    def test_undo_puts_the_hand_made_season_marks_back(self):
+        """„Rückgängig" nach dem ✓ auf der Kachel darf Haken nicht verschlucken,
+        die vorher einzeln gesetzt waren."""
+        sid = self.ids["series"]
+        self.client.put(f"/api/titles/{sid}/seasons/1", json={"seen": True})
+
+        r = self.client.put(f"/api/titles/{sid}/state", json={"status": "seen"})
+        self.assertEqual(r.json()["seasons_before"], [1])  # das merkt sich die Oberfläche
+        seen = [s["seen"] for s in self.client.get(f"/api/titles/{sid}").json()["seasons"]]
+        self.assertEqual(seen, [True, True, False])
+
+        r = self.client.put(f"/api/titles/{sid}/state",
+                            json={"status": "unseen", "rating": None, "seasons": [1]})
+        self.assertEqual(r.json()["status"], "unseen")
+        seen = [s["seen"] for s in self.client.get(f"/api/titles/{sid}").json()["seasons"]]
+        self.assertEqual(seen, [True, False, False])  # Staffel 1 ist wieder da
+
+    def test_restoring_every_aired_season_makes_the_series_seen_again(self):
+        sid = self.ids["series"]
+        r = self.client.put(f"/api/titles/{sid}/state", json={"status": "unseen", "seasons": [1, 2]})
+        self.assertEqual(r.json()["status"], "seen")  # die Haken entscheiden
+
+    def test_restore_ignores_seasons_that_have_not_aired(self):
+        sid = self.ids["series"]
+        self.client.put(f"/api/titles/{sid}/state", json={"status": "unseen", "seasons": [1, 3, 99]})
+        seen = [s["seen"] for s in self.client.get(f"/api/titles/{sid}").json()["seasons"]]
+        self.assertEqual(seen, [True, False, False])
+
+    def test_a_movie_has_no_seasons_to_mark(self):
+        self.assertEqual(self.client.put(f"/api/titles/{self.ids['action']}/seasons/1",
+                                         json={"seen": True}).status_code, 404)
 
     def test_genres_and_status(self):
         names = [g["name"] for g in self.client.get("/api/genres").json()]

@@ -83,6 +83,19 @@ function describe(title, state, changes) {
   return null
 }
 
+/** Mark one season of a series. The series' own "gesehen" follows from the marks, so the
+ *  answer carries the new title state – that keeps the card in the list behind in step. */
+export async function setSeasonSeen(item, seasonNumber, seen) {
+  try {
+    const after = await api.setSeasonSeen(item.id, seasonNumber, seen)
+    userState[item.id] = after.user
+    return after.seasons
+  } catch (e) {
+    showToast(`Speichern fehlgeschlagen: ${e.message}`)
+    return null
+  }
+}
+
 export async function updateUserState(item, changes) {
   const before = { ...currentState(item) }
   try {
@@ -90,8 +103,15 @@ export async function updateUserState(item, changes) {
     userState[item.id] = after
     const message = describe(item.title, after, changes)
     if (message) {
+      // Für Serien die Staffelhaken von vorher mitschicken: ein Zurücksetzen auf „ungesehen“
+      // löscht sonst auch die, die einzeln gesetzt waren und mit dieser Aktion nichts zu tun haben.
+      const restore = {
+        status: before.status,
+        rating: before.rating ?? null,
+        ...(item.media_type === 'tv' ? { seasons: after.seasons_before ?? [] } : {}),
+      }
       showToast(message, async () => {
-        userState[item.id] = await api.setState(item.id, before)
+        userState[item.id] = await api.setState(item.id, restore)
         ui.toast = null
       })
     }

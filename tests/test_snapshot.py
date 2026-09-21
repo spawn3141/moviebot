@@ -4,7 +4,7 @@ import unittest
 from datetime import date, timedelta
 from pathlib import Path
 
-from moviebot import catalog, db, snapshot
+from moviebot import catalog, db, queries, snapshot
 from moviebot.config import Config, Service
 from moviebot.db import connect, now_iso
 from moviebot.tmdb import MAX_DISCOVER_RESULTS, TMDBClient, TMDBError
@@ -248,6 +248,11 @@ class DetailsTest(unittest.TestCase):
                               " VALUES (?, ?, ?, ?)", (title_id, service, first_seen, first_seen))
         return title_id
 
+    def user_state(self, title_id: int) -> tuple:
+        row = self.conn.execute("SELECT status, rating FROM user_state WHERE title_id = ?",
+                                (title_id,)).fetchone()
+        return (row["status"], row["rating"]) if row else ("unseen", None)
+
     def test_verification_flags_rent_only_titles(self):
         a, b = self.add("movie", 1), self.add("movie", 2)
 
@@ -360,6 +365,47 @@ class DetailsTest(unittest.TestCase):
         events = self.conn.execute("SELECT event, season_number FROM events").fetchall()
         self.assertEqual([tuple(e) for e in events], [("new_season", 2)])
 
+
+    def test_new_season_makes_a_finished_series_unseen_again(self):
+        """Eine abgehakte Serie taucht wieder auf, sobald es weitergeht – ohne dass die
+        Bewertung oder die Haken der alten Staffeln verloren gehen."""
+        title_id = self.add("tv", 7, service="wow")
+        seasons = [{"season_number": 1, "air_date": "2019-03-01"}]
+
+        class FakeClient:
+            def details(self, media_type, tmdb_id):
+                return fake_details(media_type, tmdb_id, [30], seasons)
+
+        client = FakeClient()
+        snapshot.update_details(self.conn, client, self.cfg, date.today())
+        queries.set_user_state(self.conn, title_id, {"status": "seen", "rating": 4})
+        self.assertEqual(self.user_state(title_id), ("seen", 4))
+
+        seasons.append({"season_number": 2, "air_date": date.today().isoformat()})
+        snapshot.update_details(self.conn, client, self.cfg, date.today() + timedelta(days=1),
+                                changed_tv_ids={7})
+
+        self.assertEqual(self.user_state(title_id), ("unseen", 4))  # Bewertung bleibt
+        marked = [r[0] for r in self.conn.execute(
+            "SELECT season_number FROM season_state WHERE title_id = ?", (title_id,))]
+        self.assertEqual(marked, [1])  # Staffel 1 bleibt abgehakt, Staffel 2 ist offen
+
+    def test_a_season_that_has_not_aired_yet_leaves_the_series_seen(self):
+        title_id = self.add("tv", 7, service="wow")
+        seasons = [{"season_number": 1, "air_date": "2019-03-01"}]
+
+        class FakeClient:
+            def details(self, media_type, tmdb_id):
+                return fake_details(media_type, tmdb_id, [30], seasons)
+
+        client = FakeClient()
+        snapshot.update_details(self.conn, client, self.cfg, date.today())
+        queries.set_user_state(self.conn, title_id, {"status": "seen"})
+
+        seasons.append({"season_number": 2, "air_date": "2099-01-01"})  # angekündigt, nicht gelaufen
+        snapshot.update_details(self.conn, client, self.cfg, date.today() + timedelta(days=1),
+                                changed_tv_ids={7})
+        self.assertEqual(self.user_state(title_id)[0], "seen")
 
     def test_series_are_refreshed_at_least_weekly(self):
         self.add("tv", 7, service="wow")

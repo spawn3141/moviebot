@@ -25,7 +25,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 
-from . import catalog
+from . import catalog, queries
 from .config import FREE_MONETIZATION, Config, Service
 from .db import get_setting, now_iso, set_setting
 from .tmdb import TMDBClient, TMDBError, TMDBNotFound, has_region_offers, provider_ids_with
@@ -361,8 +361,12 @@ def update_details(conn: sqlite3.Connection, client: TMDBClient, cfg: Config, to
                 conn.execute("UPDATE availability SET verified = ? WHERE title_id = ? AND service = ?",
                              (ok, title_id, a["service"]))
             if row["media_type"] == "tv":
-                catalog.update_seasons(conn, title_id, details.get("seasons", []), today,
-                                       emit_events=had_details)
+                released = catalog.update_seasons(conn, title_id, details.get("seasons", []),
+                                                  today, emit_events=had_details)
+                if released:
+                    # A season nobody has marked means the series is not fully seen any more,
+                    # so it comes back into "Entdecken" instead of staying hidden for good.
+                    queries.sync_series_status(conn, title_id)
             if conn.execute("SELECT manual FROM titles WHERE id = ?", (title_id,)).fetchone()[0]:
                 refresh_manual_availability(conn, cfg, title_id, today, announce=True)
         if progress and (i % 10 == 0 or i == len(todo)):

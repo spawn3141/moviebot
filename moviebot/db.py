@@ -6,7 +6,7 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 SCHEMA_FILE = Path(__file__).with_name("schema.sql")
 
 def _add_column(table: str, declaration: str):
@@ -60,6 +60,7 @@ MIGRATIONS: dict[int, list] = {
         """UPDATE availability SET verified = NULL WHERE verified = 0 AND removed_at IS NULL
            AND NOT EXISTS (SELECT 1 FROM offers o WHERE o.title_id = availability.title_id)""",
     ],
+    10: [],  # season_state comes from schema.sql
 }
 
 
