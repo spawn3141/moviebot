@@ -31,6 +31,10 @@ Image-Version löst du selbst aus:
 - oder im Terminal: `gh workflow run docker.yml`
 - oder ein Versions-Tag: `git tag v1.0 && git push origin v1.0` (baut zusätzlich `:v1.0`)
 
+Welche Version gerade läuft und von wann sie ist, steht ganz unten auf der **Hilfe**-Seite
+(und in `GET /api/status`). Die Nummer kommt aus `pyproject.toml` bzw. vom Versions-Tag, der
+„Stand“ ist derselbe Commit wie in der Marke `:sha-<commit>`.
+
 Jeder Lauf überschreibt `:latest` und legt eine unveränderliche Marke `:sha-<commit>` daneben –
 die ist dein Weg zurück, falls eine neue Version auf Unraid Ärger macht. Gebaut wird nur, wenn
 die Tests durchlaufen. Wer lokal bauen will:

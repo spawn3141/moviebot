@@ -28,6 +28,15 @@ COPY moviebot/ /src/moviebot/
 COPY --from=web /build/moviebot/web/ /src/moviebot/web/
 RUN pip install --no-cache-dir /src && rm -rf /src
 
+# Version und Stand für die Hilfe-Seite. Der Workflow gibt sie beim Bauen mit; erst hier unten,
+# damit die Schritte darüber nicht bei jedem Commit neu laufen.
+ARG MOVIEBOT_VERSION=""
+ARG MOVIEBOT_COMMIT=""
+ARG MOVIEBOT_RELEASED=""
+ENV MOVIEBOT_VERSION=$MOVIEBOT_VERSION \
+    MOVIEBOT_COMMIT=$MOVIEBOT_COMMIT \
+    MOVIEBOT_RELEASED=$MOVIEBOT_RELEASED
+
 COPY config.example.toml /opt/moviebot/config.example.toml
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh

@@ -55,6 +55,15 @@ jobs:
             type=ref,event=tag
             type=sha,format=short
 
+      # Landet im Image und steht dann unten auf der Hilfe-Seite.
+      - name: Version und Stand bestimmen
+        id: version
+        run: |
+          # Bei einem Versions-Tag (v1.0) ist das die Versionsnummer, sonst gilt pyproject.toml.
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"; fi
+          echo "commit=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+          echo "released=$(git log -1 --format=%cs)" >> "$GITHUB_OUTPUT"
+
       - name: Bauen und hochladen
         uses: docker/build-push-action@v6
         with:
@@ -63,5 +72,9 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            MOVIEBOT_VERSION=${{ steps.version.outputs.version }}
+            MOVIEBOT_COMMIT=${{ steps.version.outputs.commit }}
+            MOVIEBOT_RELEASED=${{ steps.version.outputs.released }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

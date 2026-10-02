@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import catalog, queries
+from . import catalog, queries, version
 from .config import Config
 from .db import connect
 from .snapshot import import_title
@@ -268,6 +268,9 @@ class Schedule(BaseModel):
 
 
 class Status_(BaseModel):
+    version: str
+    commit: str | None = Field(description="Git-Stand, wie in der Image-Marke sha-<commit>")
+    released: str | None = Field(description="Tag, von dem diese Version stammt")
     min_year: int = Field(description="Titel ab diesem Jahr werden automatisch verfolgt")
     first_snapshot: str | None
     has_comparison: bool = Field(description="false = bisher nur der erste Abgleich, "
@@ -306,7 +309,7 @@ def create_app(cfg: Config, scheduler: SnapshotScheduler | None = None,
 
     app = FastAPI(
         title="moviebot",
-        version="0.1.0",
+        version=version.info()["version"],
         description="Filme und Serien aus deinen Streaming-Abos filtern und bewerten. "
                     + queries.ATTRIBUTION,
         lifespan=lifespan,
@@ -540,7 +543,8 @@ def create_app(cfg: Config, scheduler: SnapshotScheduler | None = None,
         schedule = scheduler.info() if scheduler else None
         if schedule and not schedule["last_result"]:
             schedule["last_result"] = queries.get_run_summary(conn)  # e.g. after a restart
-        return {**queries.status(conn), "min_year": cfg.min_year, "schedule": schedule}
+        return {**queries.status(conn), **version.info(), "min_year": cfg.min_year,
+                "schedule": schedule}
 
     @app.post("/api/snapshot", response_model=SnapshotStarted, status_code=202, tags=["System"],
               summary="Abgleich mit TMDB jetzt starten (läuft im Hintergrund)")

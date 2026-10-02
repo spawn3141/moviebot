@@ -2,6 +2,7 @@ import tempfile
 import unittest
 from datetime import date, timedelta
 from pathlib import Path
+from unittest import mock
 
 from fastapi.testclient import TestClient
 
@@ -483,6 +484,18 @@ class ApiTest(unittest.TestCase):
         self.assertIn("Action", names)
         self.assertNotIn("Action & Adventure", names)
         self.assertEqual(self.client.get("/api/status").json()["titles"], 7)
+
+    def test_status_reports_version(self):
+        from moviebot import version
+
+        env = {"MOVIEBOT_VERSION": "1.2", "MOVIEBOT_COMMIT": "abc1234",
+               "MOVIEBOT_RELEASED": "2026-10-02"}
+        version.info.cache_clear()
+        self.addCleanup(version.info.cache_clear)
+        with mock.patch.dict("os.environ", env):
+            status = self.client.get("/api/status").json()
+        self.assertEqual((status["version"], status["commit"], status["released"]),
+                         ("1.2", "abc1234", "2026-10-02"))
 
 
 class WebUiTest(unittest.TestCase):

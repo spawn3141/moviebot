@@ -1,6 +1,7 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import { api } from '../api'
+import { formatDate } from '../format'
 
 const status = ref(null)
 
@@ -20,6 +21,16 @@ const SORTS = [
     'Abgleich zählen als gleich alt; bei gleichem Tag entscheidet die Beliebtheit.'],
   ['Titel A–Z', 'Alphabetisch nach dem deutschen Titel.'],
 ]
+
+// "heute", "vor 3 Tagen", "vor 2 Monaten" – wie alt die laufende Version ist
+function age(iso) {
+  const days = Math.round((new Date().setHours(12, 0, 0, 0) - new Date(`${iso}T12:00:00`)) / 86400000)
+  if (days <= 0) return 'heute'
+  if (days === 1) return 'gestern'
+  if (days < 60) return `vor ${days} Tagen`
+  if (days < 730) return `vor ${Math.round(days / 30)} Monaten`
+  return `vor ${Math.floor(days / 365)} Jahren`
+}
 
 onMounted(async () => {
   status.value = await api.status()
@@ -170,6 +181,17 @@ onMounted(async () => {
         Altersfreigabe ({{ status.titles_ratings_checked }} abgefragt) und
         {{ status.titles_with_offers }} mit vollständiger Angebotsliste.
         Mehr dazu unter <RouterLink to="/einstellungen">Einstellungen</RouterLink>.
+      </p>
+    </section>
+
+    <section v-if="status">
+      <h2>Version</h2>
+      <p>
+        moviebot {{ status.version }}
+        <template v-if="status.released">
+          vom {{ formatDate(status.released) }} ({{ age(status.released) }})
+        </template>
+        <span v-if="status.commit" class="muted"> · Stand {{ status.commit }}</span>
       </p>
     </section>
   </div>
