@@ -19,6 +19,7 @@ const NEW_OPTIONS = [['', 'Alle'], ['7', 'Neu: 7 Tage'], ['14', 'Neu: 14 Tage'],
 const DEFAULTS = {
   media_type: '', genre: [], services: [], year_from: '', year_to: '', q: '',
   sort: 'popularity', new_days: '', show_seen: false, max_age: '', include_unrated: false,
+  show_unavailable: false,
 }
 
 const route = useRoute()
@@ -33,6 +34,7 @@ const f = reactive({
   services: asArray(route.query.services),
   show_seen: route.query.show_seen === 'true',
   include_unrated: route.query.include_unrated === 'true',
+  show_unavailable: route.query.show_unavailable === 'true',
 })
 const search = ref(f.q)
 
@@ -55,7 +57,7 @@ const activeFilterCount = computed(() => {
   // the service selection is a filter too – except "Alle", which restricts nothing
   const services = f.services.includes('all') ? 0 : Math.max(f.services.length, 1)
   return ['media_type', 'year_from', 'year_to', 'new_days', 'max_age'].filter((k) => f[k] !== '').length
-    + f.genre.length + services + (f.show_seen ? 1 : 0)
+    + f.genre.length + services + (f.show_seen ? 1 : 0) + (f.show_unavailable ? 1 : 0)
 })
 
 /** "in Prime Video, WOW" – but not a wall of 19 names. */
@@ -89,7 +91,10 @@ async function load(reset = true) {
   loading.value = true
   error.value = ''
   try {
-    const params = { ...f, page: nextPage, page_size: PAGE_SIZE }
+    const { show_unavailable, ...filters } = f
+    const params = { ...filters, page: nextPage, page_size: PAGE_SIZE }
+    // as text: the API wrapper drops a plain `false`
+    if (show_unavailable) params.only_available = 'false'
     if (f.max_age === '') params.include_unrated = false
     const data = await api.titles(params)
     if (id !== requestId) return // a newer request is on its way
@@ -289,6 +294,9 @@ onMounted(async () => {
         <label class="check">
           <input v-model="f.show_seen" type="checkbox" /> Gesehene anzeigen
         </label>
+        <label class="check" title="Auch Titel, die gerade bei keinem der gewählten Dienste laufen – z. B. noch nicht erschienene">
+          <input v-model="f.show_unavailable" type="checkbox" /> Auch nicht verfügbare anzeigen
+        </label>
         <button type="button" class="link" @click="reset">Alle Filter zurücksetzen</button>
       </div>
     </div>
@@ -332,7 +340,8 @@ onMounted(async () => {
     </div>
 
     <div class="grid">
-      <TitleCard v-for="item in visible" :key="item.id" :item="item" />
+      <TitleCard v-for="item in visible" :key="item.id" :item="item"
+                 :badge="item.available_on.length ? '' : 'nicht verfügbar'" />
     </div>
 
     <div class="more">
