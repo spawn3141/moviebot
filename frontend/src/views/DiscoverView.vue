@@ -48,7 +48,8 @@ const genres = ref([])
 const services = ref([])
 const showFilters = ref(false)
 const status = ref(null)
-const activeFilterId = ref(null)   // saved filter currently applied
+// saved filter currently applied; kept in the URL like the filters themselves
+const activeFilterId = ref(Number(route.query.saved) || null)
 
 const paidServices = computed(() => services.value.filter((s) => !s.free))
 const freeServices = computed(() => services.value.filter((s) => s.free))
@@ -80,7 +81,7 @@ let saveTimer
 function saveFilters() {
   clearTimeout(saveTimer)
   saveTimer = setTimeout(() => {
-    api.updateSettings({ discover_filters: { ...f } }).catch(() => {})
+    api.updateSettings({ discover_filters: { ...f, saved: activeFilterId.value } }).catch(() => {})
   }, 600)
 }
 
@@ -113,13 +114,22 @@ async function loadGenres() {
   genres.value = await api.genres({ media_type: f.media_type })
 }
 
-watch(f, () => {
+/** Keep URL and "last used" setting in step with the filters and the applied saved filter. */
+function remember() {
   const query = Object.fromEntries(
     Object.entries(f).filter(([k, v]) => (Array.isArray(v) ? v.length : v !== DEFAULTS[k])))
+  if (activeFilterId.value) query.saved = activeFilterId.value
   router.replace({ query })
   saveFilters()
+}
+
+watch(f, () => {
+  remember()
   load()
 }, { deep: true })
+
+// applying a saved filter that matches what is already set changes nothing in `f`
+watch(activeFilterId, remember)
 
 watch(() => f.media_type, loadGenres)
 
@@ -203,7 +213,9 @@ onMounted(async () => {
   if (!Object.keys(route.query).length) {
     const settings = await api.settings().catch(() => null)
     if (settings?.discover_filters) {
-      Object.assign(f, { ...DEFAULTS, ...settings.discover_filters })
+      const { saved, ...filters } = settings.discover_filters
+      Object.assign(f, { ...DEFAULTS, ...filters })
+      activeFilterId.value = saved ?? null
       search.value = f.q
       restored = true // the watcher on `f` loads and updates the URL
     }
@@ -213,6 +225,8 @@ onMounted(async () => {
   services.value = await api.services()
   status.value = await api.status()
   await loadSavedFilters(true)
+  // the remembered saved filter may have been deleted in the meantime
+  if (activeFilterId.value && !activeFilter.value) activeFilterId.value = null
 })
 </script>
 

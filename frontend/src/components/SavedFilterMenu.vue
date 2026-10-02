@@ -18,9 +18,12 @@ const busy = ref(false)
 const root = ref(null)
 const active = computed(() => savedFilters.items.find((x) => x.id === props.activeId) ?? null)
 // no saved filter selected but something is set: the current filter is simply unsaved
-const unsaved = computed(() => !active.value && props.canSave)
+const unsaved = computed(() => !active.value && !pending.value && props.canSave)
+// after a reload the selected id is known before the list of saved filters has arrived
+const pending = computed(() => props.activeId != null && !savedFilters.loaded)
 const label = computed(() => {
   if (active.value) return active.value.name
+  if (pending.value) return '…'
   return unsaved.value ? 'Ungespeicherter Filter' : 'Gespeicherte Filter'
 })
 
