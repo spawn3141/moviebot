@@ -33,6 +33,17 @@ export function relativeDay(iso) {
   return formatDate(iso, true)
 }
 
+/** "12 neu, 2 neue Staffeln, 1 weggefallen" */
+export function summarizeChanges(result) {
+  if (!result) return 'keine Änderungen'
+  const parts = []
+  if (result.added) parts.push(`${result.added} neu`)
+  if (result.readded) parts.push(`${result.readded} wieder da`)
+  if (result.new_seasons) parts.push(`${result.new_seasons} neue ${result.new_seasons === 1 ? 'Staffel' : 'Staffeln'}`)
+  if (result.removed) parts.push(`${result.removed} weggefallen`)
+  return parts.length ? parts.join(', ') : 'keine Änderungen'
+}
+
 export function durationLabel(item) {
   if (item.media_type === 'tv') {
     const seasons = item.number_of_seasons

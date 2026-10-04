@@ -366,6 +366,43 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(queries.get_run_summary(conn)["added"], 2)
         self.assertEqual(self.client.get("/api/status").json()["schedule"], None)  # no scheduler here
 
+    def test_snapshot_changes_lists_the_titles_per_day(self):
+        from moviebot.db import connect
+
+        conn = connect(self.cfg.db_path)
+        self.addCleanup(conn.close)
+        today = date.today()
+        yesterday = (today - timedelta(days=1)).isoformat()
+
+        def event(key, service, kind, day, season=None):
+            conn.execute("INSERT INTO events (title_id, service, event, season_number, event_date) "
+                         "VALUES (?, ?, ?, ?, ?)", (self.ids[key], service, kind, season, day))
+
+        with conn:
+            conn.execute("DELETE FROM events")  # only the events of this test
+            event("lucky", "prime", "added", today.isoformat())
+            event("action", "prime", "added", today.isoformat())
+            event("action", "wow", "added", today.isoformat())  # two services: one entry
+            event("series", None, "new_season", yesterday, 3)
+            event("removed", "prime", "removed", yesterday)
+            event("netflix", "netflix", "added", (today - timedelta(days=7)).isoformat())  # too old
+
+        days = self.client.get("/api/snapshot/changes").json()
+        self.assertEqual([d["date"] for d in days], [today.isoformat(), yesterday])  # newest first
+        self.assertEqual([(t["title"], t["services"]) for t in days[0]["added"]],
+                         [("Action A", ["Prime Video", "WOW"]), ("Zufall G", ["Prime Video"])])
+        self.assertEqual([(t["title"], t["seasons"]) for t in days[1]["new_seasons"]], [("Serie B", [3])])
+        self.assertEqual([(t["title"], t["still_on"]) for t in days[1]["removed"]], [("Weg F", [])])
+        self.assertEqual(days[1]["added"], [])
+        self.assertFalse(days[0]["added"][0]["seen"])
+        with conn:  # gone from Prime, but still running at WOW
+            conn.execute("INSERT INTO availability (title_id, service, first_seen, last_seen, verified) "
+                         "VALUES (?, 'wow', ?, ?, 1)", (self.ids["removed"], yesterday, yesterday))
+        self.assertEqual(self.client.get("/api/snapshot/changes").json()[1]["removed"][0]["still_on"], ["WOW"])
+        self.client.put(f"/api/titles/{self.ids['action']}/state", json={"status": "seen"})
+        self.assertTrue(self.client.get("/api/snapshot/changes").json()[0]["added"][0]["seen"])
+        self.assertEqual(len(self.client.get("/api/snapshot/changes", params={"days": 8}).json()), 3)
+
     def test_search_and_import_by_hand(self):
         items = self.client.get("/api/search", params={"q": "Matrix"}).json()
         self.assertEqual([(i["title"], i["year"], i["title_id"]) for i in items],

@@ -123,6 +123,9 @@ docker exec -it moviebot python -m moviebot providers --search wow
   stehen und bleiben auch dann in der Liste, wenn sie in keinem Dienst mehr laufen.
 - **Gespeicherte Filter**: gespeicherte Suchen, als Knöpfe über der Filterleiste auf „Entdecken“.
   Ein Klick setzt den Filter; danach Speichern / Verwerfen / Als neuen Filter speichern.
+- **Neu**: was die Abgleiche der letzten 7 Tage geändert haben, Tag für Tag und Titel für Titel –
+  neu, wieder da, neue Staffeln, bei einem Dienst weggefallen (mit Hinweis, wo der Titel noch läuft).
+  Alle verfolgten Dienste, nicht nur die eigenen Abos; gesehene Titel stehen mit drin.
 - **Einstellungen**: Abos an/aus, kostenlose Angebote, Datenstand.
 
 Code in `frontend/` (Vue + Vite). Beim Entwickeln: `.venv/bin/python -m moviebot serve` und
@@ -143,6 +146,7 @@ parallel `cd frontend && npm run dev` → http://localhost:5173 (lädt Änderung
 | `GET/POST /api/filters`, `PATCH/DELETE /api/filters/{id}` | gespeicherte Filter verwalten |
 | `GET /api/search`, `POST /api/titles/import`, `DELETE /api/titles/{id}/import` | Titel von Hand aufnehmen |
 | `PUT /api/titles/{id}/lists` | Listen eines Titels setzen |
+| `GET /api/snapshot/changes` | Änderungen der letzten N Tage, Titel für Titel |
 | `GET /api/genres`, `GET /api/status` | Genre-Liste, Datenstand |
 
 Genres von Filmen und Serien sind vereinheitlicht („Action & Adventure“ zählt als Action und Abenteuer).

@@ -13,6 +13,7 @@ import TitleDetail from './components/TitleDetail.vue'
       <nav>
         <RouterLink to="/">Entdecken</RouterLink>
         <RouterLink to="/listen">Listen</RouterLink>
+        <RouterLink to="/neu">Neu</RouterLink>
         <RouterLink to="/einstellungen">Einstellungen</RouterLink>
         <RouterLink to="/hilfe">Hilfe</RouterLink>
       </nav>

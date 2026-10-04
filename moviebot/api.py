@@ -250,6 +250,26 @@ class LastRun(BaseModel):
     failed: list[str] = Field(description="Dienste, deren Abgleich fehlschlug")
 
 
+class ChangedTitle(BaseModel):
+    id: int
+    media_type: MediaType
+    title: str
+    year: int | None
+    poster_url: str | None
+    seen: bool
+    services: list[str] = Field(description="Dienste, in denen sich etwas geändert hat")
+    seasons: list[int] = Field(description="nur bei neuen Staffeln")
+    still_on: list[str] = Field(description="nur bei weggefallenen Titeln: Dienste, in denen er noch läuft")
+
+
+class DayChanges(BaseModel):
+    date: str
+    added: list[ChangedTitle]
+    readded: list[ChangedTitle]
+    new_seasons: list[ChangedTitle]
+    removed: list[ChangedTitle]
+
+
 class Progress(BaseModel):
     phase: Literal["catalogs", "details"]
     done: int
@@ -545,6 +565,11 @@ def create_app(cfg: Config, scheduler: SnapshotScheduler | None = None,
             schedule["last_result"] = queries.get_run_summary(conn)  # e.g. after a restart
         return {**queries.status(conn), **version.info(), "min_year": cfg.min_year,
                 "schedule": schedule}
+
+    @app.get("/api/snapshot/changes", response_model=list[DayChanges], tags=["System"],
+             summary="Was die Abgleiche der letzten Tage geändert haben, Titel für Titel")
+    def snapshot_changes(conn: Conn, days: Annotated[int, Query(ge=1, le=90)] = 7):
+        return queries.recent_changes(conn, days)
 
     @app.post("/api/snapshot", response_model=SnapshotStarted, status_code=202, tags=["System"],
               summary="Abgleich mit TMDB jetzt starten (läuft im Hintergrund)")

@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { api } from '../api'
+import { summarizeChanges as summarize } from '../format'
 import { showToast } from '../store'
 import TitleImport from '../components/TitleImport.vue'
 
@@ -79,17 +80,6 @@ async function startSnapshot() {
 }
 
 onBeforeUnmount(() => clearTimeout(pollTimer))
-
-/** "12 neu, 2 neue Staffeln, 1 nicht mehr im Abo" */
-function summarize(result) {
-  if (!result) return 'keine Änderungen'
-  const parts = []
-  if (result.added) parts.push(`${result.added} neu`)
-  if (result.readded) parts.push(`${result.readded} wieder da`)
-  if (result.new_seasons) parts.push(`${result.new_seasons} neue ${result.new_seasons === 1 ? 'Staffel' : 'Staffeln'}`)
-  if (result.removed) parts.push(`${result.removed} nicht mehr im Abo`)
-  return parts.length ? parts.join(', ') : 'keine Änderungen'
-}
 
 const PHASES = {
   catalogs: 'Kataloge der Dienste werden verglichen',
@@ -202,8 +192,7 @@ onMounted(async () => {
         <button type="button" :disabled="status.schedule.running" @click="startSnapshot">
           {{ status.schedule.running ? 'Abgleich läuft …' : 'Jetzt abgleichen' }}
         </button>
-        <RouterLink v-if="status.schedule.last_result?.added || status.schedule.last_result?.new_seasons"
-                    to="/neu" class="to-new">Neuzugänge ansehen</RouterLink>
+        <RouterLink to="/neu" class="to-new">Änderungen der letzten 7 Tage ansehen</RouterLink>
       </p>
       <div v-if="status.schedule?.running" class="progress">
         <template v-if="status.schedule.progress">

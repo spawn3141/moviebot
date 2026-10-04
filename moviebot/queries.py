@@ -822,6 +822,46 @@ def run_summary(conn: sqlite3.Connection, results: dict, since_event_id: int) ->
     }
 
 
+def recent_changes(conn: sqlite3.Connection, days: int = 7, today: date | None = None) -> list[dict]:
+    """What the runs of the last `days` days changed, newest day first: one entry per title
+    and kind of change. Days without changes are left out."""
+    since = ((today or date.today()) - timedelta(days=days - 1)).isoformat()
+    rows = conn.execute(
+        """
+        SELECT e.event_date, e.event, e.season_number, s.name AS service_name,
+               t.id, t.media_type, t.title, t.year, t.poster_path, u.status
+        FROM events e JOIN titles t ON t.id = e.title_id LEFT JOIN services s ON s.key = e.service
+             LEFT JOIN user_state u ON u.title_id = t.id
+        WHERE e.event_date >= ?
+        ORDER BY e.event_date DESC, t.title COLLATE NOCASE, t.id, s.name, e.season_number
+        """, (since,))
+    by_day: dict[str, dict] = {}
+    entries: dict[tuple[str, str, int], dict] = {}
+    for r in rows:
+        day = by_day.setdefault(r["event_date"], {
+            "date": r["event_date"], "added": [], "readded": [], "new_seasons": [], "removed": []})
+        group = "new_seasons" if r["event"] == "new_season" else r["event"]
+        key = (r["event_date"], group, r["id"])
+        entry = entries.get(key)
+        if entry is None:
+            entry = entries[key] = {
+                "id": r["id"], "media_type": r["media_type"], "title": r["title"], "year": r["year"],
+                "poster_url": f"{POSTER_BASE}{r['poster_path']}" if r["poster_path"] else None,
+                "seen": r["status"] == "seen", "services": [], "seasons": [], "still_on": [],
+            }
+            day[group].append(entry)
+        if r["service_name"] and r["service_name"] not in entry["services"]:
+            entry["services"].append(r["service_name"])
+        if r["season_number"] is not None and r["season_number"] not in entry["seasons"]:
+            entry["seasons"].append(r["season_number"])
+    # a title that left one service may well still run in another
+    gone = [e for day in by_day.values() for e in day["removed"]]
+    available = _availability_for(conn, list({e["id"] for e in gone}))
+    for e in gone:
+        e["still_on"] = [a["name"] for a in available.get(e["id"], [])]
+    return list(by_day.values())
+
+
 # --- adding titles by hand -----------------------------------------------------------
 
 def search_results(conn: sqlite3.Connection, results: list[dict]) -> list[dict]:

@@ -44,6 +44,7 @@ export const api = {
   updateSettings: (body) => request('PUT', '/api/settings', { body }),
   status: () => request('GET', '/api/status'),
   startSnapshot: () => request('POST', '/api/snapshot'),
+  snapshotChanges: (days) => request('GET', '/api/snapshot/changes', { params: { days } }),
   search: (q) => request('GET', '/api/search', { params: { q } }),
   importTitle: (media_type, tmdb_id) =>
     request('POST', '/api/titles/import', { body: { media_type, tmdb_id } }),
