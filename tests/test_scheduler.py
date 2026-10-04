@@ -3,9 +3,15 @@ import unittest
 from datetime import datetime, time
 from pathlib import Path
 
-from moviebot.config import Config, load_config
+from unittest import mock
+
+from moviebot import queries
+from moviebot.config import Config, Service, load_config
 from moviebot.db import connect
-from moviebot.scheduler import SnapshotScheduler, snapshot_lock
+from moviebot.scheduler import SnapshotScheduler, snapshot_lock, snapshot_locked
+from moviebot.tmdb import TMDBClient
+
+from .fake_tmdb import MiniTmdb
 
 
 class SchedulerTest(unittest.TestCase):
@@ -84,6 +90,90 @@ class SchedulerTest(unittest.TestCase):
                 self.assertEqual((first, second), (True, False))
         with snapshot_lock(self.cfg.db_path) as again:
             self.assertTrue(again)
+
+
+class SchedulerRunTest(unittest.TestCase):
+    """The run itself, with a pretend TMDB in place of the real one."""
+
+    def setUp(self):
+        self.cfg = Config(db_path=Path(tempfile.mkdtemp()) / "s.db", snapshot_time=time(6, 0),
+                          services=[Service("prime", "Prime Video", [9]), Service("wow", "WOW", [30])])
+        connect(self.cfg.db_path).close()
+        self.scheduler = SnapshotScheduler(self.cfg)
+        self.tmdb = MiniTmdb()
+        self.tmdb.movie(1, "Film eins", [9])
+        patcher = mock.patch.object(TMDBClient, "from_config", return_value=self.tmdb)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def stored_summary(self) -> dict | None:
+        conn = connect(self.cfg.db_path)
+        try:
+            return queries.get_run_summary(conn)
+        finally:
+            conn.close()
+
+    def test_run_reports_and_stores_what_changed(self):
+        self.scheduler._run()  # first run: nothing to announce
+        self.assertEqual(self.scheduler.last_result["added"], 0)
+        self.tmdb.movie(2, "Film zwei", [9])
+        self.scheduler._run()
+        result = self.scheduler.last_result
+        self.assertEqual((result["added"], result["removed"], result["failed"]), (1, 0, []))
+        self.assertEqual(self.stored_summary(), result)  # survives a restart
+        info = self.scheduler.info()
+        self.assertEqual((info["running"], info["last_error"]), (False, None))
+        self.assertIsNone(info["progress"])  # only shown while a run is going on
+        self.assertFalse(snapshot_locked(self.cfg.db_path))
+        self.assertFalse(self.scheduler._is_due(datetime.now().replace(hour=7)))  # done for today
+
+    def test_failed_service_is_shown_as_error(self):
+        self.tmdb.broken_providers = {30}
+        with self.assertLogs("moviebot.snapshot", level="ERROR"):
+            self.scheduler._run()
+        self.assertEqual(self.scheduler.last_error, "Fehlgeschlagen: wow/movie, wow/tv")
+        self.assertEqual(self.scheduler.last_result["failed"], ["wow/movie", "wow/tv"])
+        # the next clean run clears the error
+        self.tmdb.broken_providers = set()
+        self.scheduler._run()
+        self.assertIsNone(self.scheduler.last_error)
+
+    def test_crash_keeps_the_server_alive(self):
+        self.tmdb.crash = RuntimeError("kaputt")
+        with self.assertLogs("moviebot.scheduler", level="ERROR"):
+            self.scheduler._run()  # must not raise
+        self.assertEqual(self.scheduler.last_error, "kaputt")
+        self.assertFalse(self.scheduler.info()["running"])
+        self.assertFalse(snapshot_locked(self.cfg.db_path))
+        self.assertIsNone(self.stored_summary())
+        # and the next run works
+        self.tmdb.crash = None
+        self.scheduler._run()
+        self.assertIsNone(self.scheduler.last_error)
+        self.assertEqual(self.scheduler.last_result["failed"], [])
+
+    def test_run_is_skipped_while_another_one_holds_the_lock(self):
+        with snapshot_lock(self.cfg.db_path):
+            with self.assertLogs("moviebot.scheduler", level="WARNING"):
+                self.scheduler._run()
+        self.assertIn("Übersprungen", self.scheduler.last_error)
+        self.assertEqual(self.tmdb.calls, [])
+
+    def test_triggered_run_happens_in_the_background(self):
+        self.scheduler.at = None  # no automatic run, only the one asked for
+        self.scheduler.start()
+        self.addCleanup(self.scheduler.stop)
+        self.assertTrue(self.scheduler.trigger())
+        self.assertFalse(self.scheduler.trigger())  # one at a time
+        for _ in range(200):
+            if self.scheduler.last_result and not self.scheduler.info()["running"]:
+                break
+            self.scheduler._stop.wait(0.05)
+        self.assertEqual(self.scheduler.last_result["failed"], [])
+        self.assertFalse(self.scheduler.info()["running"])
+        self.scheduler.stop()
+        self.scheduler._thread.join(timeout=5)
+        self.assertFalse(self.scheduler._thread.is_alive())
 
 
 class ScheduleConfigTest(unittest.TestCase):
