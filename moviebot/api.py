@@ -378,6 +378,9 @@ def create_app(cfg: Config, scheduler: SnapshotScheduler | None = None,
             description="Mit max_age: auch Titel ohne bekannte Freigabe zeigen")] = False,
         new_days: Annotated[int | None, Query(
             ge=1, description="Nur neu im Dienst oder neue Staffel in den letzten N Tagen")] = None,
+        show_unreleased: Annotated[bool | None, Query(
+            description="Auch Titel mit Erscheinungsdatum in der Zukunft "
+                        "(Standard: nein, in Listen ja)")] = None,
         show_seen: bool = False,
         show_not_interested: bool = False,
         sort: Sort = "popularity",
@@ -389,7 +392,7 @@ def create_app(cfg: Config, scheduler: SnapshotScheduler | None = None,
             genres=genre or [], year_from=year_from, year_to=year_to, q=q,
             min_rating=min_rating, max_age=max_age, include_unrated=include_unrated,
             list_id=list_id, filter_id=filter_id, only_available=only_available,
-            new_days=new_days, show_seen=show_seen,
+            new_days=new_days, show_unreleased=show_unreleased, show_seen=show_seen,
             show_not_interested=show_not_interested, sort=sort, page=page, page_size=page_size,
         )
         try:

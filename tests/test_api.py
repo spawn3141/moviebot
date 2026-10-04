@@ -159,6 +159,29 @@ class ApiTest(unittest.TestCase):
                          "VALUES (?, 'new_season', 2, ?)", (self.ids["action"], TODAY.isoformat()))
         self.assertEqual(self.titles(sort="added")[0], "Action A")
 
+    def test_unreleased_titles_are_hidden_unless_asked_for(self):
+        from moviebot.db import connect
+
+        tomorrow = (TODAY + timedelta(days=1)).isoformat()
+        conn = connect(self.cfg.db_path)
+        self.addCleanup(conn.close)
+        with conn:
+            conn.execute("UPDATE titles SET release_date = ? WHERE id = ?", (tomorrow, self.ids["action"]))
+            conn.execute("UPDATE titles SET release_date = NULL WHERE id = ?", (self.ids["lucky"],))
+        self.assertEqual(self.titles(), ["Serie B", "Zufall G"])  # no date: stays visible
+        self.assertEqual(self.client.get("/api/titles").json()["total"], 2)
+        self.assertIn("Action A", self.titles(show_unreleased=True))
+        with conn:  # out today
+            conn.execute("UPDATE titles SET release_date = ? WHERE id = ?",
+                         (TODAY.isoformat(), self.ids["action"]))
+        self.assertIn("Action A", self.titles())
+        # a list shows what was put on it, released or not
+        with conn:
+            conn.execute("UPDATE titles SET release_date = ? WHERE id = ?", (tomorrow, self.ids["action"]))
+        merkliste = self.client.post("/api/lists", json={"name": "Bald"}).json()["id"]
+        self.client.put(f"/api/titles/{self.ids['action']}/lists", json={"list_ids": [merkliste]})
+        self.assertEqual(self.titles(list_id=merkliste), ["Action A"])
+
     def test_invalid_input(self):
         self.assertEqual(self.client.get("/api/titles", params={"sort": "x"}).status_code, 422)
         self.assertEqual(self.client.get("/api/titles", params={"services": "nope"}).status_code, 400)

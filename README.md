@@ -109,6 +109,8 @@ docker exec -it moviebot python -m moviebot providers --search wow
 
 - **Entdecken**: filtern nach Film/Serie, Genre, Jahr, Dienst, Suche, „neu in N Tagen“; sortieren;
   gesehen / Sterne / nicht interessiert direkt auf der Kachel (mit Rückgängig).
+  Titel mit Erscheinungsdatum in der Zukunft sind ausgeblendet, bis es so weit ist
+  („Noch nicht erschienene anzeigen“ holt sie dazu); in Listen stehen sie immer.
 - Neuzugänge und neue Staffeln über den Filter „Neu: N Tage“ (Kacheln zeigen „Neu bei WOW“
   bzw. „Staffel 3“); beim ersten Start liegt dafür der gespeicherte Filter „Neu“ bereit.
 - **Titel hinzufügen** (Einstellungen): Suche bei TMDB, um ältere Titel außerhalb von `min_year`

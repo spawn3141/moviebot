@@ -19,7 +19,7 @@ const NEW_OPTIONS = [['', 'Alle'], ['7', 'Neu: 7 Tage'], ['14', 'Neu: 14 Tage'],
 const DEFAULTS = {
   media_type: '', genre: [], services: [], year_from: '', year_to: '', q: '',
   sort: 'popularity', new_days: '', show_seen: false, max_age: '', include_unrated: false,
-  show_unavailable: false,
+  show_unavailable: false, show_unreleased: false,
 }
 
 const route = useRoute()
@@ -35,6 +35,7 @@ const f = reactive({
   show_seen: route.query.show_seen === 'true',
   include_unrated: route.query.include_unrated === 'true',
   show_unavailable: route.query.show_unavailable === 'true',
+  show_unreleased: route.query.show_unreleased === 'true',
 })
 const search = ref(f.q)
 
@@ -59,6 +60,7 @@ const activeFilterCount = computed(() => {
   const services = f.services.includes('all') ? 0 : Math.max(f.services.length, 1)
   return ['media_type', 'year_from', 'year_to', 'new_days', 'max_age'].filter((k) => f[k] !== '').length
     + f.genre.length + services + (f.show_seen ? 1 : 0) + (f.show_unavailable ? 1 : 0)
+    + (f.show_unreleased ? 1 : 0)
 })
 
 /** "in Prime Video, WOW" – but not a wall of 19 names. */
@@ -308,8 +310,11 @@ onMounted(async () => {
         <label class="check">
           <input v-model="f.show_seen" type="checkbox" /> Gesehene anzeigen
         </label>
-        <label class="check" title="Auch Titel, die gerade bei keinem der gewählten Dienste laufen – z. B. noch nicht erschienene">
+        <label class="check" title="Auch Titel, die gerade bei keinem der gewählten Dienste laufen">
           <input v-model="f.show_unavailable" type="checkbox" /> Auch nicht verfügbare anzeigen
+        </label>
+        <label class="check" title="Auch Titel, deren Erscheinungsdatum noch in der Zukunft liegt (bei Serien: Start der ersten Staffel)">
+          <input v-model="f.show_unreleased" type="checkbox" /> Noch nicht erschienene anzeigen
         </label>
         <button type="button" class="link" @click="reset">Alle Filter zurücksetzen</button>
       </div>

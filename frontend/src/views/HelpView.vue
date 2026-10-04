@@ -86,6 +86,13 @@ onMounted(async () => {
           Bezieht sich auf das Erscheinungsjahr bzw. den Serienstart. Serien können älter sein als
           der beobachtete Zeitraum, wenn seitdem neue Folgen liefen.
         </dd>
+        <dt>Noch nicht erschienene anzeigen</dt>
+        <dd>
+          Dienste führen manche Titel schon vor dem Start. Liegt das Erscheinungsdatum (bei Serien:
+          der Start der ersten Staffel) in der Zukunft, ist der Titel auf „Entdecken“ ausgeblendet,
+          bis es so weit ist – sonst stünde er bei „Neueste zuerst“ dauerhaft ganz vorn. Mit dem
+          Haken siehst du auch diese. In deinen Listen und unter „Neu“ steht immer alles.
+        </dd>
       </dl>
     </section>
 

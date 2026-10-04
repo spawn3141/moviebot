@@ -72,6 +72,7 @@ class TitleFilter:
     filter_id: int | None = None           # apply this saved filter
     only_available: bool | None = None     # None = True, except when a list is shown
     new_days: int | None = None            # only titles new in the selected services / new season
+    show_unreleased: bool | None = None    # None = False, except when a list is shown
     show_seen: bool = False
     show_not_interested: bool = False
     sort: str = "popularity"
@@ -174,7 +175,8 @@ SAVED_FILTERS = {
     "new_days": "new_days",
 }
 # stored for the UI (e.g. its preferred sorting), ignored when filtering
-TOLERATED_FILTER_KEYS = {"sort", "show_seen", "show_not_interested", "only_available"}
+TOLERATED_FILTER_KEYS = {"sort", "show_seen", "show_not_interested", "only_available",
+                         "show_unreleased"}
 
 # The web UI sends numbers as strings ("2020"); SQLite would compare those as text.
 FILTER_TYPES = {"year_from": int, "year_to": int, "max_age": int, "new_days": int,
@@ -347,6 +349,12 @@ def search_titles(conn: sqlite3.Connection, f: TitleFilter, today: date | None =
     if f.max_age is not None:
         where.append("(t.age_rating <= ?" + (" OR t.age_rating IS NULL)" if f.include_unrated else ")"))
         params.append(f.max_age)
+    # Services list some titles before they are out; TMDB then has a release date in the future
+    # (series: start of the first season). A list shows whatever was put on it.
+    show_unreleased = f.show_unreleased if f.show_unreleased is not None else f.list_id is not None
+    if not show_unreleased:
+        where.append("(t.release_date IS NULL OR t.release_date <= ?)")
+        params.append(today.isoformat())
     hidden = [s for s, show in (("seen", f.show_seen), ("not_interested", f.show_not_interested))
               if not show]
     if hidden:
