@@ -12,6 +12,14 @@ const minYear = ref(null)
 const error = ref('')
 
 const paid = computed(() => services.value.filter((s) => !s.free))
+// Entry for a Hermes agent's ~/.hermes/config.yaml – the key itself is never shown here.
+const mcpConfig = computed(() => [
+  'mcp_servers:',
+  '  moviebot:',
+  `    url: "${window.location.origin}/mcp"`,
+  '    headers:',
+  '      Authorization: "Bearer <dein MOVIEBOT_MCP_TOKEN>"',
+].join('\n'))
 const free = computed(() => services.value.filter((s) => s.free))
 
 async function load() {
@@ -169,6 +177,24 @@ onMounted(async () => {
     </section>
 
     <section v-if="status">
+      <h2>KI-Assistent (MCP)</h2>
+      <template v-if="status.mcp">
+        <p class="muted">
+          <strong class="on">Aktiv.</strong> Ein KI-Assistent wie Hermes kann Titel suchen,
+          von TMDB hinzufügen und auf Listen setzen. Eintrag für seine Konfiguration:
+        </p>
+        <pre class="snippet">{{ mcpConfig }}</pre>
+        <p class="muted small">Den Schlüssel zeigt Moviebot nicht an – er steht in der
+          Container-Variable <code>MOVIEBOT_MCP_TOKEN</code>.</p>
+      </template>
+      <p v-else class="muted">
+        Nicht eingerichtet. Zum Einschalten beim Container die Variable
+        <code>MOVIEBOT_MCP_TOKEN</code> auf einen langen, zufälligen Schlüssel setzen und neu starten.
+        Danach steht hier der Eintrag für den Assistenten.
+      </p>
+    </section>
+
+    <section v-if="status">
       <h2>Datenstand</h2>
       <dl class="facts">
         <dt>Automatischer Abgleich</dt>
@@ -251,4 +277,10 @@ h2 { font-size: 1rem; margin: 28px 0 4px; }
 .bar { height: 6px; border-radius: 999px; background: var(--panel-2); overflow: hidden; }
 .fill { height: 100%; background: var(--accent-2); transition: width .3s ease; }
 .to-new { font-size: .9rem; }
+.on { color: var(--accent-2); }
+code { font-size: .85em; }
+.snippet {
+  margin: 0; padding: 10px 14px; background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius); font-size: .85rem; overflow-x: auto; user-select: all;
+}
 </style>

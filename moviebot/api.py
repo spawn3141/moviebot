@@ -10,8 +10,9 @@ from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.routing import Route
 
-from . import catalog, queries, version
+from . import catalog, mcp_server, queries, version
 from .config import Config
 from .db import connect
 from .snapshot import import_title
@@ -303,6 +304,8 @@ class Status_(BaseModel):
     titles_with_offers: int
     titles_ratings_checked: int = Field(description="Titel, für die Freigaben abgefragt wurden")
     titles_with_age_rating: int
+    mcp: bool = Field(description="MCP-Zugang für KI-Assistenten unter /mcp eingerichtet "
+                                  "(Schlüssel gesetzt)")
     attribution: str
 
 
@@ -319,13 +322,22 @@ def create_app(cfg: Config, scheduler: SnapshotScheduler | None = None,
     catalog.bootstrap(conn, cfg)
     conn.close()
 
+    # MCP endpoint for AI assistants – only with a key, see mcp_server.py
+    mcp = mcp_server.create_mcp(cfg, client_factory) if cfg.mcp_token else None
+
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         if scheduler:
             scheduler.start()
-        yield
-        if scheduler:
-            scheduler.stop()
+        try:
+            if mcp:
+                async with mcp.session_manager.run():
+                    yield
+            else:
+                yield
+        finally:
+            if scheduler:
+                scheduler.stop()
 
     app = FastAPI(
         title="moviebot",
@@ -567,7 +579,7 @@ def create_app(cfg: Config, scheduler: SnapshotScheduler | None = None,
         if schedule and not schedule["last_result"]:
             schedule["last_result"] = queries.get_run_summary(conn)  # e.g. after a restart
         return {**queries.status(conn), **version.info(), "min_year": cfg.min_year,
-                "schedule": schedule}
+                "schedule": schedule, "mcp": mcp is not None}
 
     @app.get("/api/snapshot/changes", response_model=list[DayChanges], tags=["System"],
              summary="Was die Abgleiche der letzten Tage geändert haben, Titel für Titel")
@@ -582,6 +594,21 @@ def create_app(cfg: Config, scheduler: SnapshotScheduler | None = None,
         if not scheduler.trigger():
             raise HTTPException(status_code=409, detail="Es läuft bereits ein Abgleich")
         return {"started": True}
+
+    if mcp:
+        # stateless + plain JSON answers: every tool call stands on its own, nothing to keep
+        # between requests. host 0.0.0.0 = no localhost-only check; the key protects instead.
+        inner = mcp.streamable_http_app(streamable_http_path=mcp_server.PATH,
+                                        stateless_http=True, json_response=True, host="0.0.0.0")
+        endpoint = next(r.endpoint for r in inner.routes
+                        if isinstance(r, Route) and r.path == mcp_server.PATH)
+        app.router.routes.append(Route(mcp_server.PATH,
+                                       endpoint=mcp_server.RequireKey(endpoint, cfg.mcp_token)))
+    else:
+        @app.api_route(mcp_server.PATH, methods=["GET", "POST", "DELETE"], include_in_schema=False)
+        def mcp_off():
+            raise HTTPException(status_code=404, detail="MCP-Zugang ist aus. Zum Einschalten "
+                                                        "MOVIEBOT_MCP_TOKEN setzen.")
 
     mount_web_ui(app, WEB_DIR)
     return app

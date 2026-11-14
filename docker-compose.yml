@@ -18,3 +18,5 @@ services:
       TZ: "Europe/Berlin"
       # Statt des Eintrags in der config.toml kann der Token auch hier stehen:
       # TMDB_READ_ACCESS_TOKEN: "..."
+      # Schaltet den MCP-Zugang für KI-Assistenten unter /mcp ein (langer Zufallswert):
+      # MOVIEBOT_MCP_TOKEN: "..."

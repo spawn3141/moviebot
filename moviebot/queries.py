@@ -745,6 +745,19 @@ def set_title_lists(conn: sqlite3.Connection, title_id: int, list_ids: list[int]
     return _lists_for(conn, [title_id]).get(title_id, [])
 
 
+def add_to_list(conn: sqlite3.Connection, title_id: int, list_id: int) -> bool:
+    """Put one title on one list and leave its other lists alone. False = it was on it already
+    (then its place in the list, `added_at`, stays as it was)."""
+    if conn.execute("SELECT 1 FROM titles WHERE id = ?", (title_id,)).fetchone() is None:
+        raise LookupError(title_id)
+    _one_list(conn, list_id)
+    with conn:
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO list_items (list_id, title_id, added_at) VALUES (?, ?, ?)",
+            (list_id, title_id, now_iso()))
+    return cur.rowcount == 1
+
+
 def list_saved_filters(conn: sqlite3.Connection) -> list[dict]:
     rows = conn.execute(
         "SELECT * FROM saved_filters ORDER BY position, name COLLATE NOCASE").fetchall()

@@ -61,6 +61,7 @@ die Datenbank von selbst neben ihr im Volume.
 | `TZ` | `Europe/Berlin` | Der tägliche Abgleich läuft nach lokaler Zeit – ohne das wäre 06:00 die UTC-Zeit |
 | `TMDB_READ_ACCESS_TOKEN` | – | Token, falls er nicht in der `config.toml` stehen soll (hat Vorrang) |
 | `MOVIEBOT_CONFIG` | `/config/config.toml` | Pfad zur Konfiguration |
+| `MOVIEBOT_MCP_TOKEN` | – | Schaltet den MCP-Zugang für KI-Assistenten unter `/mcp` ein; der Assistent muss diesen Schlüssel mitschicken (siehe unten) |
 
 ### Auf Unraid einrichten
 
@@ -154,6 +155,36 @@ parallel `cd frontend && npm run dev` → http://localhost:5173 (lädt Änderung
 Genres von Filmen und Serien sind vereinheitlicht („Action & Adventure“ zählt als Action und Abenteuer).
 Gezeigt werden nur Titel, deren Verfügbarkeit bestätigt ist. Sortierung „rating“ gewichtet nach Anzahl
 der Stimmen, damit 9,5 bei 3 Stimmen nicht vor 7,8 bei 5000 Stimmen landet.
+
+## KI-Assistent (MCP)
+
+Unter `/mcp` kann ein KI-Assistent, etwa ein [Hermes Agent](https://hermes-agent.nousresearch.com/)
+mit Telegram, Moviebot bedienen. Der Zugang ist aus, bis ein Schlüssel gesetzt ist:
+
+1. Einen langen Zufallswert erzeugen, z. B. `openssl rand -hex 32`.
+2. Ihn beim Container als Variable `MOVIEBOT_MCP_TOKEN` eintragen und neu starten.
+3. Beim Assistenten eintragen. Für Hermes in `~/.hermes/config.yaml`, danach im Chat `/reload-mcp`:
+
+   ```yaml
+   mcp_servers:
+     moviebot:
+       url: "http://<unraid>:8080/mcp"
+       headers:
+         Authorization: "Bearer <der Schlüssel>"
+   ```
+
+Die Einstellungsseite zeigt, ob der Zugang aktiv ist, und den Eintrag mit der richtigen Adresse.
+
+| Werkzeug | Zweck |
+|---|---|
+| `titel_suchen` | in Moviebot suchen und filtern; jeder Treffer zeigt Dienste und Listen – also auch, ob er schon auf der Merkliste steht |
+| `tmdb_suchen` | bei TMDB suchen, auch Titel, die noch nicht in Moviebot sind |
+| `titel_hinzufuegen` | Titel von TMDB aufnehmen |
+| `auf_liste_setzen` | auf eine Liste setzen (Standard: Merkliste); meldet, wenn er schon draufstand |
+| `liste_anzeigen` | Inhalt einer Liste |
+
+Löschen kann der Assistent nichts. Der Schlüssel schützt nur im Heimnetz ausreichend – `/mcp` nicht
+ohne weiteren Schutz ins Internet freigeben.
 
 ## Wie es funktioniert
 

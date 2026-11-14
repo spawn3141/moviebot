@@ -7,6 +7,7 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn>=0.30",
     "certifi",
+    "mcp>=2.3,<3",   # MCP-Zugang für KI-Assistenten (/mcp)
 ]
 
 [project.optional-dependencies]

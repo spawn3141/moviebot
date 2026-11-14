@@ -33,6 +33,7 @@ class Config:
     max_drop_ratio: float = 0.2
     snapshot_time: time | None = None  # daily snapshot in `serve`; None = off
     db_path: Path = Path("data/moviebot.db")
+    mcp_token: str | None = None   # key for the MCP endpoint /mcp; None = endpoint off
 
     def monetization_for(self, service: Service) -> list[str]:
         return FREE_MONETIZATION if service.free else self.monetization
@@ -91,4 +92,6 @@ def load_config(path: Path | None = None) -> Config:
         max_drop_ratio=float(snapshot.get("max_drop_ratio", 0.2)),
         snapshot_time=snapshot_time,
         db_path=db_path,
+        mcp_token=(os.environ.get("MOVIEBOT_MCP_TOKEN") or data.get("mcp", {}).get("token") or "").strip()
+        or None,
     )

@@ -8,6 +8,11 @@ api_key = ""
 region = "DE"
 language = "de-DE"
 
+# MCP-Zugang für KI-Assistenten (z. B. Hermes) unter /mcp. Ohne Schlüssel ist er aus.
+# Alternativ per Umgebungsvariable MOVIEBOT_MCP_TOKEN (hat Vorrang).
+# [mcp]
+# token = ""
+
 [scope]
 # Nur Titel ab diesem Jahr. Filme: Erscheinungsjahr. Serien: seit diesem Jahr liefen Folgen.
 # Kann jederzeit geändert werden – dazukommende ältere Titel gelten nicht als "neu im Abo".
