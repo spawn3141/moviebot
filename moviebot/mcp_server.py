@@ -80,7 +80,8 @@ def create_mcp(cfg: Config, client_factory: Callable) -> MCPServer:
         jahr_von: int | None = None,
         jahr_bis: int | None = None,
         min_bewertung: Annotated[float | None, Field(ge=0, le=10,
-                                                     description="TMDB-Bewertung 0–10")] = None,
+                                                     description="TMDB-Bewertung 0–10; Titel mit zu wenigen "
+                                                                 "Stimmen (Einstellung) fallen dann weg")] = None,
         neu_seit_tagen: Annotated[int | None, Field(
             ge=1, description="Nur neu im Dienst oder neue Staffel in den letzten N Tagen")] = None,
         sortierung: Sortierung = "beliebt",

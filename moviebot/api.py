@@ -220,6 +220,8 @@ class Settings(BaseModel):
     series_newest: Literal["season", "first"] = Field(
         description="Sortierung 'Neueste zuerst' bei Serien: Start der neuesten Staffel "
                     "oder Start der Serie")
+    min_votes: int = Field(description="Mindestanzahl Stimmen, damit ein Titel beim "
+                                       "Bewertungsfilter mitzählt")
     discover_filters: dict | None = Field(
         description="Zuletzt benutzte Filter und Sortierung der Oberfläche")
 
@@ -227,6 +229,7 @@ class Settings(BaseModel):
 class SettingsUpdate(BaseModel):
     include_free: bool | None = None
     series_newest: Literal["season", "first"] | None = None
+    min_votes: int | None = Field(default=None, ge=0, le=queries.MAX_MIN_VOTES)
     discover_filters: dict | None = None
 
 
@@ -569,6 +572,7 @@ def create_app(cfg: Config, scheduler: SnapshotScheduler | None = None,
         try:
             return queries.update_settings(conn, include_free=body.include_free,
                                            series_newest=body.series_newest,
+                                           min_votes=body.min_votes,
                                            discover_filters=body.discover_filters)
         except ValueError as e:
             raise bad_request(e)

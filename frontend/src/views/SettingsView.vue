@@ -50,6 +50,20 @@ async function setSeriesNewest(value) {
   }
 }
 
+async function setMinVotes(event) {
+  const value = Number(event.target.value)
+  if (!Number.isInteger(value) || value < 0) {
+    event.target.value = settings.value.min_votes
+    return
+  }
+  try {
+    settings.value = await api.updateSettings({ min_votes: value })
+  } catch (e) {
+    showToast(`Konnte nicht speichern: ${e.message}`)
+    event.target.value = settings.value.min_votes
+  }
+}
+
 async function toggleFree() {
   try {
     settings.value = await api.updateSettings({ include_free: !settings.value.include_free })
@@ -176,6 +190,24 @@ onMounted(async () => {
       </ul>
     </section>
 
+    <section>
+      <h2>Bewertungsfilter</h2>
+      <p class="muted">
+        Beim Filter „Bewertung ab …“ zählen nur Titel mit genügend Stimmen bei TMDB.
+        Sonst rutscht ein Film mit 9,5 aus 3 Stimmen nach oben.
+      </p>
+      <ul class="list">
+        <li>
+          <label class="switch-row">
+            <span class="name">Mindestens Stimmen</span>
+            <span class="counts">0 = alle Titel zählen</span>
+            <input type="number" class="votes" min="0" step="10" inputmode="numeric"
+                   :value="settings.min_votes" @change="setMinVotes" />
+          </label>
+        </li>
+      </ul>
+    </section>
+
     <section v-if="status">
       <h2>KI-Assistent (MCP)</h2>
       <template v-if="status.mcp">
@@ -268,6 +300,7 @@ h2 { font-size: 1rem; margin: 28px 0 4px; }
 .name { grid-area: name; }
 .counts { grid-area: counts; font-size: .8rem; color: var(--muted); }
 .switch { grid-area: switch; }
+.votes { grid-area: switch; width: 6em; text-align: right; }
 .facts { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 8px 0 0; }
 .facts dt { color: var(--muted); }
 .facts dd { margin: 0; }

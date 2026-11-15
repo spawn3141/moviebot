@@ -47,6 +47,10 @@ SORTS = {
 }
 
 SERIES_NEWEST = ("season", "first")  # setting values for the "newest" sort
+# With a minimum rating set, titles with fewer votes than this are left out: a 9.0 from
+# 3 votes says little. Adjustable in the settings.
+DEFAULT_MIN_VOTES = 50
+MAX_MIN_VOTES = 100_000
 MAX_FILTER_JSON = 4000  # stored filter state is small; guard against junk
 
 
@@ -86,6 +90,7 @@ def get_settings(conn: sqlite3.Connection) -> dict:
     return {
         "include_free": get_setting(conn, "include_free") == "1",
         "series_newest": get_setting(conn, "series_newest") or "season",
+        "min_votes": int(get_setting(conn, "min_votes") or DEFAULT_MIN_VOTES),
         # last used filters/sorting of the Discover page, so navigating away does not lose them
         "discover_filters": json.loads(get_setting(conn, "discover_filters") or "null"),
     }
@@ -93,7 +98,10 @@ def get_settings(conn: sqlite3.Connection) -> dict:
 
 def update_settings(conn: sqlite3.Connection, include_free: bool | None = None,
                     series_newest: str | None = None,
-                    discover_filters: dict | None = None) -> dict:
+                    discover_filters: dict | None = None,
+                    min_votes: int | None = None) -> dict:
+    if min_votes is not None and not 0 <= min_votes <= MAX_MIN_VOTES:
+        raise ValueError(f"min_votes muss zwischen 0 und {MAX_MIN_VOTES} liegen")
     if series_newest is not None and series_newest not in SERIES_NEWEST:
         raise ValueError(f"series_newest muss {' oder '.join(SERIES_NEWEST)} sein")
     filters_json = None
@@ -106,6 +114,8 @@ def update_settings(conn: sqlite3.Connection, include_free: bool | None = None,
             set_setting(conn, "include_free", "1" if include_free else "0")
         if series_newest is not None:
             set_setting(conn, "series_newest", series_newest)
+        if min_votes is not None:
+            set_setting(conn, "min_votes", str(min_votes))
         if filters_json is not None:
             set_setting(conn, "discover_filters", filters_json)
     return get_settings(conn)
@@ -344,8 +354,8 @@ def search_titles(conn: sqlite3.Connection, f: TitleFilter, today: date | None =
         where.append("(t.title LIKE ? OR t.original_title LIKE ?)")
         params += [f"%{f.q}%", f"%{f.q}%"]
     if f.min_rating is not None:
-        where.append("t.vote_average >= ?")
-        params.append(f.min_rating)
+        where.append("t.vote_average >= ? AND COALESCE(t.vote_count, 0) >= ?")
+        params += [f.min_rating, get_settings(conn)["min_votes"]]
     if f.max_age is not None:
         where.append("(t.age_rating <= ?" + (" OR t.age_rating IS NULL)" if f.include_unrated else ")"))
         params.append(f.max_age)

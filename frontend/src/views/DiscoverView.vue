@@ -15,11 +15,12 @@ const SORTS = [
   ['title', 'Titel A–Z'],
 ]
 const AGE_OPTIONS = [['', 'Alle'], ['0', 'bis 0 Jahre'], ['6', 'bis 6 Jahre'], ['12', 'bis 12 Jahre'], ['16', 'bis 16 Jahre']]
+const RATING_OPTIONS = [['', 'Alle'], ['5', 'ab 5'], ['6', 'ab 6'], ['6.5', 'ab 6,5'], ['7', 'ab 7'], ['7.5', 'ab 7,5'], ['8', 'ab 8']]
 const NEW_OPTIONS = [['', 'Alle'], ['7', 'Neu: 7 Tage'], ['14', 'Neu: 14 Tage'], ['30', 'Neu: 30 Tage']]
 const DEFAULTS = {
   media_type: '', genre: [], services: [], year_from: '', year_to: '', q: '',
   sort: 'popularity', new_days: '', show_seen: false, max_age: '', include_unrated: false,
-  show_unavailable: false, show_unreleased: false,
+  min_rating: '', show_unavailable: false, show_unreleased: false,
 }
 
 const route = useRoute()
@@ -58,7 +59,7 @@ const serviceNames = computed(() => Object.fromEntries(services.value.map((s) =>
 const activeFilterCount = computed(() => {
   // the service selection is a filter too – except "Alle", which restricts nothing
   const services = f.services.includes('all') ? 0 : Math.max(f.services.length, 1)
-  return ['media_type', 'year_from', 'year_to', 'new_days', 'max_age'].filter((k) => f[k] !== '').length
+  return ['media_type', 'year_from', 'year_to', 'new_days', 'max_age', 'min_rating'].filter((k) => f[k] !== '').length
     + f.genre.length + services + (f.show_seen ? 1 : 0) + (f.show_unavailable ? 1 : 0)
     + (f.show_unreleased ? 1 : 0)
 })
@@ -169,7 +170,7 @@ function applyFilter(entry) {
 /** Everything that defines *which* titles are shown (not how they are sorted/paged). */
 function currentFilters() {
   const keys = ['media_type', 'genre', 'services', 'year_from', 'year_to', 'q', 'max_age',
-                'include_unrated', 'new_days']
+                'include_unrated', 'new_days', 'min_rating']
   const filters = Object.fromEntries(
     keys.map((k) => [k, f[k]]).filter(([, v]) => (Array.isArray(v) ? v.length : v !== '' && v !== false)))
   // empty selection means "meine Dienste"; saved filters store that explicitly
@@ -287,6 +288,12 @@ onMounted(async () => {
       </div>
 
       <div class="filter-row inline">
+        <label title="Titel mit zu wenigen Stimmen fallen weg – die Grenze stellst du in den Einstellungen ein">
+          <span class="label">Bewertung</span>
+          <select v-model="f.min_rating" aria-label="Mindestbewertung">
+            <option v-for="[value, label] in RATING_OPTIONS" :key="value" :value="value">{{ label }}</option>
+          </select>
+        </label>
         <label>
           <span class="label">Altersfreigabe</span>
           <select v-model="f.max_age" aria-label="Altersfreigabe">
@@ -316,6 +323,9 @@ onMounted(async () => {
         <label class="check" title="Auch Titel, deren Erscheinungsdatum noch in der Zukunft liegt (bei Serien: Start der ersten Staffel)">
           <input v-model="f.show_unreleased" type="checkbox" /> Noch nicht erschienene anzeigen
         </label>
+      </div>
+
+      <div class="filter-row reset-row">
         <button type="button" class="link" @click="reset">Alle Filter zurücksetzen</button>
       </div>
     </div>
@@ -389,6 +399,7 @@ onMounted(async () => {
 .filter-row { display: grid; gap: 6px; }
 .filter-row.inline { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
 .filter-row.inline input[type='number'] { width: 110px; }
+.reset-row { justify-items: start; }
 .label { font-size: .75rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); display: block; margin-bottom: 4px; }
 .check { display: inline-flex; align-items: center; gap: 6px; padding-bottom: 8px; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }

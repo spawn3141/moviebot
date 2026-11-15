@@ -109,6 +109,18 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(self.titles(include_free=True), ["Action A", "Serie B", "Frei D", "Zufall G"])
         self.assertEqual(self.titles(new_days=7), ["Serie B"])
 
+    def test_rating_filter_needs_enough_votes(self):
+        # "Zufall G" has 9.5 but only 3 votes, so the default of 50 leaves it out
+        self.assertEqual(self.titles(min_rating=7.2), ["Action A"])
+        self.assertEqual(self.client.get("/api/settings").json()["min_votes"], 50)
+        r = self.client.put("/api/settings", json={"min_votes": 0})
+        self.assertEqual(r.json()["min_votes"], 0)
+        self.assertEqual(self.titles(min_rating=7.2), ["Action A", "Zufall G"])
+        # without a minimum rating the vote count does not matter
+        self.client.put("/api/settings", json={"min_votes": 10_000})
+        self.assertIn("Zufall G", self.titles())
+        self.assertEqual(self.client.put("/api/settings", json={"min_votes": -1}).status_code, 422)
+
     def test_newest_sort_uses_latest_season_for_series(self):
         # default: the series' newest season (2 days ago) beats the 2025 movies
         self.assertEqual(self.titles(sort="newest")[0], "Serie B")

@@ -69,6 +69,12 @@ onMounted(async () => {
           Sortierung „Zuletzt dazugekommen“ ist das der gespeicherte Filter <strong>Neu</strong>,
           den du beim ersten Start vorfindest – er lässt sich ändern oder löschen wie jeder andere.
         </dd>
+        <dt>Bewertung</dt>
+        <dd>
+          Zeigt nur Titel, die bei TMDB mindestens so gut bewertet sind. Titel mit sehr wenigen
+          Stimmen fallen dabei weg, weil eine 9,5 aus 3 Stimmen wenig aussagt. Wie viele Stimmen
+          nötig sind, stellst du unter Einstellungen ein (anfangs 50, 0 = alle zählen).
+        </dd>
         <dt>Altersfreigabe</dt>
         <dd>
           „FSK 12“ ist die deutsche Freigabe. „ab 12*“ mit Sternchen ist aus der US-Freigabe
